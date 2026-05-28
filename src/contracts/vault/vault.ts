@@ -1,10 +1,10 @@
 /**************************************************************
  * THIS FILE IS GENERATED AND SHOULD NOT BE MANUALLY MODIFIED *
  **************************************************************/
-import { MoveStruct, normalizeMoveArguments, type RawTransactionArgument } from '../utils/index.js';
+import { MoveStruct, normalizeMoveArguments, type RawTransactionArgument } from '../utils';
 import { bcs } from '@mysten/sui/bcs';
 import { type Transaction } from '@mysten/sui/transactions';
-import * as balance from './deps/sui/balance.js';
+import * as balance from './deps/sui/balance';
 const $moduleName = '@local-pkg/vault::vault';
 export const Category = new MoveStruct({ name: `${$moduleName}::Category`, fields: {
         id: bcs.u8(),

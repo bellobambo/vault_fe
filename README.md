@@ -154,3 +154,7 @@ Yes. Looking at the ABI/functions, this project is a Sui-based
   The contract only manages SUI, not other coins yet. So right now it
   is best suited for SUI-denominated budgeting. Later, it could be
   expanded to support generic coin types like Coin<T>.
+
+
+   https://docs.memwal.ai/getting-started/what-is-memwal , 
+   https://docs.wal.app/docs/typescript-sdk/sdks
