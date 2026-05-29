@@ -28,10 +28,15 @@ export function Providers({ children }: Readonly<{ children: React.ReactNode }>)
                 colorPrimary: "#007979",
                 colorLink: "#007979",
                 colorInfo: "#007979",
-                colorBgLayout: "#f7faf9",
-                colorBorder: "#d7e5e2",
+                colorText: "#007979",
+                colorTextBase: "#007979",
+                colorBgBase: "#F5F5F5",
+                colorBgContainer: "#F5F5F5",
+                colorBgElevated: "#F5F5F5",
+                colorBgLayout: "#007979",
+                colorBorder: "#007979",
                 borderRadius: 8,
-                fontFamily: "var(--font-geist-sans), Arial, sans-serif",
+                fontFamily: "var(--font-montserrat), sans-serif",
               },
               components: {
                 Button: {
@@ -53,13 +58,14 @@ export function Providers({ children }: Readonly<{ children: React.ReactNode }>)
               position="top-right"
               toastOptions={{
                 style: {
-                  border: "1px solid #d7e5e2",
-                  color: "#143332",
+                  background: "#F5F5F5",
+                  border: "1px solid #007979",
+                  color: "#007979",
                 },
                 success: {
                   iconTheme: {
                     primary: "#007979",
-                    secondary: "#FFE0C5",
+                    secondary: "#F5F5F5",
                   },
                 },
               }}
