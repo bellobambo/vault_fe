@@ -158,6 +158,13 @@ body {
   min-width: 0;
   padding-inline: 8px;
   font-size: 13px;
+  border-color: #9ca3af !important;
+}
+
+.vault-card-actions .ant-btn:not(.vault-card-action-primary) {
+  background: transparent !important;
+  color: var(--vault-primary) !important;
+  border-color: #9ca3af !important;
 }
 
 .history-detail-grid {

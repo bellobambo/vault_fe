@@ -10,6 +10,7 @@
     "codegen": "sui-ts-codegen generate"
   },
   "dependencies": {
+    "@mysten-incubation/memwal": "^0.0.6",
     "@mysten/dapp-kit": "^1.0.6",
     "@mysten/sui": "^2.17.0",
     "@tanstack/react-query": "^5.100.14",

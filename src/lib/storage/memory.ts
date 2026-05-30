@@ -12,10 +12,18 @@ export type MemoryRecord = MemoryRecordInput & {
   id: string;
   memoryRef: string;
   createdAt: string;
+  memwalJobId?: string;
+  walrusBlobId?: string;
   storage: {
-    memwal: "pending" | "saved";
+    memwal: "pending" | "accepted" | "saved" | "failed";
     walrus: "pending" | "saved";
   };
+};
+
+export type RecalledMemory = {
+  blob_id: string;
+  text: string;
+  distance: number;
 };
 
 const STORAGE_KEY = "vault:memory-records";
@@ -48,6 +56,45 @@ export function saveMemoryRecordDraft(record: MemoryRecord) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify([record, ...records]));
 }
 
+export function updateMemoryRecordDraft(
+  id: string,
+  updates: Partial<Pick<MemoryRecord, "memwalJobId" | "walrusBlobId" | "storage">>,
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const records = getMemoryRecordDrafts();
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(
+      records.map((record) =>
+        record.id === id
+          ? {
+              ...record,
+              ...updates,
+              storage: updates.storage ?? record.storage,
+            }
+          : record,
+      ),
+    ),
+    );
+}
+
+export function replaceMemoryRecordDraft(record: MemoryRecord) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const records = getMemoryRecordDrafts();
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(
+      records.map((item) => (item.id === record.id ? record : item)),
+    ),
+  );
+}
+
 export function getMemoryRecordDrafts(): MemoryRecord[] {
   if (typeof window === "undefined") {
     return [];
@@ -63,4 +110,18 @@ export function getMemoryRecordDrafts(): MemoryRecord[] {
   } catch {
     return [];
   }
+}
+
+export function serializeMemoryRecord(record: MemoryRecord) {
+  return [
+    `Vault memory: ${record.title}`,
+    `Kind: ${record.kind}`,
+    `Owner: ${record.owner}`,
+    `Reference: ${record.memoryRef}`,
+    `Created: ${record.createdAt}`,
+    record.body ? `Details: ${record.body}` : undefined,
+    record.tags?.length ? `Tags: ${record.tags.join(", ")}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

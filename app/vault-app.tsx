@@ -49,7 +49,10 @@ import {
   createMemoryRecord,
   getMemoryRecordDrafts,
   saveMemoryRecordDraft,
+  serializeMemoryRecord,
   type MemoryRecord,
+  type RecalledMemory,
+  updateMemoryRecordDraft,
 } from "@/src/lib/storage/memory";
 
 type CreateBudgetValues = {
@@ -91,7 +94,25 @@ type ActionValues = {
   note?: string;
 };
 
-type DrawerKey = "createBudget" | "actions" | "storage" | "history";
+type DrawerKey = "createBudget" | "actions" | "storage" | "history" | "assistant";
+
+type RememberApiResponse = {
+  namespace: string;
+  result: {
+    id?: string;
+    job_id?: string;
+    blob_id?: string;
+    status?: string;
+  };
+};
+
+type RecallApiResponse = {
+  namespace: string;
+  result: {
+    results: RecalledMemory[];
+    total: number;
+  };
+};
 
 const cycleDurationsMs: Record<keyof typeof BUDGET_CYCLES, number> = {
   daily: 24 * 60 * 60 * 1000,
@@ -118,7 +139,12 @@ export function VaultApp() {
   const [documentForm] = Form.useForm();
   const [openDrawer, setOpenDrawer] = useState<DrawerKey | null>(null);
   const [activeAction, setActiveAction] = useState<ActionValues["action"]>("spend");
-  const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>([]);
+  const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>(getMemoryRecordDrafts);
+  const [recalledMemories, setRecalledMemories] = useState<RecalledMemory[]>([]);
+  const [assistantText, setAssistantText] = useState("");
+  const [isRemembering, setIsRemembering] = useState(false);
+  const [isRecalling, setIsRecalling] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   const [lastDigest, setLastDigest] = useState<string>();
   const [actionCategories, setActionCategories] = useState<VaultCategoryOption[]>([]);
 
@@ -298,7 +324,7 @@ export function VaultApp() {
     },
   ];
 
-  function remember(input: {
+  async function remember(input: {
     kind: "budget" | "receipt" | "document" | "history";
     title?: string;
     body?: string;
@@ -313,10 +339,57 @@ export function VaultApp() {
 
     saveMemoryRecordDraft(record);
     setMemoryRecords(getMemoryRecordDrafts());
-    return record;
+
+    try {
+      setIsRemembering(true);
+      const response = await fetch("/api/memwal/remember", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          owner: account?.address,
+          text: serializeMemoryRecord(record),
+          wait: true,
+        }),
+      });
+      const payload = (await response.json()) as RememberApiResponse | { error?: string };
+
+      if (!response.ok) {
+        throw new Error("error" in payload && payload.error ? payload.error : "Unable to save memory.");
+      }
+
+      const result = (payload as RememberApiResponse).result;
+      const savedRecord: MemoryRecord = {
+        ...record,
+        memwalJobId: result.job_id ?? result.id,
+        walrusBlobId: result.blob_id,
+        storage: {
+          memwal: result.blob_id ? "saved" : "accepted",
+          walrus: result.blob_id ? "saved" : "pending",
+        },
+      };
+
+      updateMemoryRecordDraft(savedRecord.id, {
+        memwalJobId: savedRecord.memwalJobId,
+        walrusBlobId: savedRecord.walrusBlobId,
+        storage: savedRecord.storage,
+      });
+      setMemoryRecords(getMemoryRecordDrafts());
+      return savedRecord;
+    } catch (error) {
+      updateMemoryRecordDraft(record.id, {
+        storage: {
+          memwal: "failed",
+          walrus: "pending",
+        },
+      });
+      setMemoryRecords(getMemoryRecordDrafts());
+      throw error;
+    } finally {
+      setIsRemembering(false);
+    }
   }
 
-  function handleCreateBudget(values: CreateBudgetValues) {
+  async function handleCreateBudget(values: CreateBudgetValues) {
     if (!account) {
       toast.error("Connect your Sui wallet first.");
       return;
@@ -338,11 +411,27 @@ export function VaultApp() {
       BigInt(0),
     );
     const now = Date.now();
-    const memory = remember({
-      kind: "budget",
-      title: values.memoryTitle || "Budget plan",
-      body: values.memoryBody,
-    });
+    let memory: MemoryRecord;
+
+    try {
+      memory = await remember({
+        kind: "budget",
+        title: values.memoryTitle || "Budget plan",
+        body: [
+          values.memoryBody,
+          `Cycle: ${values.cycle}`,
+          `Total: ${formatMist(amountMist)}`,
+          `Allocations: ${categories
+            .map((category) => `${category.name} ${formatMist(category.allocationMist)}`)
+            .join(", ")}`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save memory.");
+      return;
+    }
 
     const tx = buildCreateBudgetTransaction({
       amountMist,
@@ -350,7 +439,7 @@ export function VaultApp() {
       startMs: now,
       endMs: now + cycleDurationsMs[values.cycle],
       categories,
-      allowOverspend: true,
+      allowOverspend: values.allowOverspend,
       memoryRef: memory.memoryRef,
     });
 
@@ -367,17 +456,35 @@ export function VaultApp() {
     );
   }
 
-  function handleVaultAction(values: ActionValues) {
+  async function handleVaultAction(values: ActionValues) {
     if (!account) {
       toast.error("Connect your Sui wallet first.");
       return;
     }
 
-    const memory = remember({
-      kind: values.action === "spend" ? "receipt" : "history",
-      title: `${values.action} record`,
-      body: values.note,
-    });
+    let memory: MemoryRecord;
+
+    try {
+      memory = await remember({
+        kind: values.action === "spend" ? "receipt" : "history",
+        title: `${values.action} record`,
+        body: [
+          values.note,
+          `Vault: ${values.vaultId}`,
+          `Action: ${values.action}`,
+          `Amount: ${values.amount} SUI`,
+          values.categoryId !== undefined ? `Category: ${values.categoryId}` : undefined,
+          values.fromCategoryId !== undefined ? `From category: ${values.fromCategoryId}` : undefined,
+          values.toCategoryId !== undefined ? `To category: ${values.toCategoryId}` : undefined,
+          values.recipient ? `Recipient: ${values.recipient}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save memory.");
+      return;
+    }
 
     const amountMist = suiToMist(values.amount);
     const tx =
@@ -417,14 +524,115 @@ export function VaultApp() {
     );
   }
 
-  function handleDocumentSave(values: { title: string; body?: string }) {
-    remember({
-      kind: "document",
-      title: values.title,
-      body: values.body,
-    });
-    documentForm.resetFields();
-    toast.success("Document reference saved as a local draft.");
+  async function handleDocumentSave(values: { title: string; body?: string }) {
+    try {
+      await remember({
+        kind: "document",
+        title: values.title,
+        body: values.body,
+      });
+      documentForm.resetFields();
+      toast.success("Document saved to MemWal/Walrus.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save document.");
+    }
+  }
+
+  async function handleMemoryRecall(query = assistantText) {
+    if (!account) {
+      toast.error("Connect your Sui wallet first.");
+      return [];
+    }
+
+    const trimmed = query.trim();
+    if (!trimmed) {
+      toast.error("Enter a memory query.");
+      return [];
+    }
+
+    try {
+      setIsRecalling(true);
+      const response = await fetch("/api/memwal/recall", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          owner: account.address,
+          query: trimmed,
+          limit: 6,
+          maxDistance: 0.85,
+        }),
+      });
+      const payload = (await response.json()) as RecallApiResponse | { error?: string };
+
+      if (!response.ok) {
+        throw new Error("error" in payload && payload.error ? payload.error : "Unable to recall memory.");
+      }
+
+      const memories = (payload as RecallApiResponse).result.results;
+      setRecalledMemories(memories);
+      return memories;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to recall memory.");
+      return [];
+    } finally {
+      setIsRecalling(false);
+    }
+  }
+
+  async function handleMemoryRestore() {
+    if (!account) {
+      toast.error("Connect your Sui wallet first.");
+      return;
+    }
+
+    try {
+      setIsRestoring(true);
+      const response = await fetch("/api/memwal/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: account.address, limit: 50 }),
+      });
+      const payload = (await response.json()) as {
+        result?: { restored?: number; skipped?: number; total?: number };
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Unable to restore memory index.");
+      }
+
+      toast.success(
+        `Restored ${payload.result?.restored ?? 0}, skipped ${payload.result?.skipped ?? 0}.`,
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to restore memory index.");
+    } finally {
+      setIsRestoring(false);
+    }
+  }
+
+  async function handleAssistantDraft() {
+    const text = assistantText.trim();
+
+    if (!text) {
+      toast.error("Enter an action.");
+      return;
+    }
+
+    await handleMemoryRecall(text);
+
+    const draft = createActionDraft(text, vaultRows);
+    if (draft.kind === "budget") {
+      createForm.setFieldsValue(draft.values);
+      setOpenDrawer("createBudget");
+      return;
+    }
+
+    const vault = vaultRows.find((item) => item.id === draft.values.vaultId);
+    setActionCategories(vault?.categories ?? []);
+    setActiveAction(draft.values.action);
+    actionForm.setFieldsValue(draft.values);
+    setOpenDrawer("actions");
   }
 
   async function copyAddress() {
@@ -471,7 +679,15 @@ export function VaultApp() {
       <nav className="bg-[#007979] px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex w-full flex-wrap justify-end gap-3">
           <Button onClick={() => setOpenDrawer("createBudget")}>Create Budget</Button>
-          <Button onClick={() => setOpenDrawer("storage")}>Storage</Button>
+          <Button onClick={() => setOpenDrawer("assistant")}>AI Memory</Button>
+          <Button
+            onClick={() => {
+              setMemoryRecords(getMemoryRecordDrafts());
+              setOpenDrawer("storage");
+            }}
+          >
+            Storage
+          </Button>
           <Button onClick={() => setOpenDrawer("history")}>History</Button>
         </div>
       </nav>
@@ -483,7 +699,8 @@ export function VaultApp() {
               Vault
             </Typography.Title>
             <Typography.Paragraph className="vault-page-description !mx-auto !max-w-xl !text-lg">
-              Create Budget Vault
+              Split SUI into spending categories and save the budget memory reference for receipts,
+              history, and documents.
             </Typography.Paragraph>
           </section>
         ) : (
@@ -712,7 +929,7 @@ export function VaultApp() {
             </Col>
           </Row>
 
-          <Button block htmlType="submit" loading={isPending} type="primary">
+          <Button block htmlType="submit" loading={isPending || isRemembering} type="primary">
             Create budget
           </Button>
         </Form>
@@ -787,10 +1004,67 @@ export function VaultApp() {
             <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} />
           </Form.Item>
 
-          <Button block htmlType="submit" loading={isPending} type="primary">
+          <Button block htmlType="submit" loading={isPending || isRemembering} type="primary">
             Send {activeAction}
           </Button>
         </Form>
+      </Drawer>
+
+      <Drawer
+        open={openDrawer === "assistant"}
+        title="AI Memory"
+        onClose={() => setOpenDrawer(null)}
+        size="large"
+      >
+        <Form layout="vertical">
+          <Form.Item label="Action or memory query">
+            <Input.TextArea
+              autoSize={{ minRows: 4, maxRows: 8 }}
+              onChange={(event) => setAssistantText(event.target.value)}
+              placeholder="Create a monthly 10 SUI budget split across food, transport, academic, entertainment, and other"
+              value={assistantText}
+            />
+          </Form.Item>
+          <Space className="mb-4" wrap>
+            <Button
+              disabled={!account}
+              loading={isRecalling}
+              onClick={() => handleMemoryRecall()}
+            >
+              Recall
+            </Button>
+            <Button
+              disabled={!account}
+              loading={isRecalling}
+              onClick={handleAssistantDraft}
+              type="primary"
+            >
+              Draft onchain action
+            </Button>
+            <Button
+              disabled={!account}
+              loading={isRestoring}
+              onClick={handleMemoryRestore}
+            >
+              Restore from Walrus
+            </Button>
+          </Space>
+        </Form>
+
+        <div className="grid gap-3">
+          {recalledMemories.map((memory) => (
+            <Card
+              className="compact-card centered-form-card"
+              key={memory.blob_id}
+              title={shortId(memory.blob_id)}
+            >
+              <Typography.Paragraph className="!mb-2 whitespace-pre-wrap">
+                {memory.text}
+              </Typography.Paragraph>
+              <Tag className="theme-tag">Distance {memory.distance.toFixed(4)}</Tag>
+            </Card>
+          ))}
+        </div>
       </Drawer>
 
       <Drawer
@@ -810,10 +1084,23 @@ export function VaultApp() {
           <Form.Item label="Details" name="body">
             <Input.TextArea autoSize={{ minRows: 4, maxRows: 8 }} />
           </Form.Item>
-          <Button block htmlType="submit" type="primary">
+          <Button block htmlType="submit" loading={isRemembering} type="primary">
             Save reference
           </Button>
         </Form>
+
+        <Space className="mt-4" wrap>
+          <Button disabled={!account} loading={isRestoring} onClick={handleMemoryRestore}>
+            Restore from Walrus
+          </Button>
+          <Button
+            disabled={!account}
+            loading={isRecalling}
+            onClick={() => handleMemoryRecall("vault receipts documents budgets history")}
+          >
+            Recall saved memory
+          </Button>
+        </Space>
 
         <div className="mt-5 grid gap-2">
           {memoryRecords.map((record) => (
@@ -822,9 +1109,33 @@ export function VaultApp() {
               <Typography.Text className="block font-mono text-xs">
                 {record.memoryRef}
               </Typography.Text>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Tag className="theme-tag">MemWal {record.storage.memwal}</Tag>
+                <Tag className="theme-tag">Walrus {record.storage.walrus}</Tag>
+                {record.walrusBlobId ? (
+                  <Tag className="theme-tag">Blob {shortId(record.walrusBlobId)}</Tag>
+                ) : null}
+              </div>
             </div>
           ))}
         </div>
+
+        {recalledMemories.length > 0 ? (
+          <div className="mt-5 grid gap-3">
+            {recalledMemories.map((memory) => (
+              <Card
+                className="compact-card centered-form-card"
+                key={memory.blob_id}
+                title={`Walrus blob ${shortId(memory.blob_id)}`}
+              >
+                <Typography.Paragraph className="!mb-2 whitespace-pre-wrap">
+                  {memory.text}
+                </Typography.Paragraph>
+                <Tag className="theme-tag">Distance {memory.distance.toFixed(4)}</Tag>
+              </Card>
+            ))}
+          </div>
+        ) : null}
       </Drawer>
 
       <Drawer
@@ -942,6 +1253,114 @@ function CategorySelect({ categories = [], ...props }: CategorySelectProps) {
         value: category.id,
       }))}
     />
+  );
+}
+
+type AssistantDraft =
+  | { kind: "budget"; values: Partial<CreateBudgetValues> }
+  | { kind: "action"; values: Partial<ActionValues> & Pick<ActionValues, "action"> };
+
+function createActionDraft(text: string, vaultRows: Array<{ id: string; categories: VaultCategoryOption[] }>): AssistantDraft {
+  const lower = text.toLowerCase();
+  const amount = extractSuiAmount(text);
+  const cycle = extractCycle(lower);
+
+  if (lower.includes("budget") || lower.includes("split")) {
+    return {
+      kind: "budget",
+      values: {
+        cycle,
+        allowOverspend: true,
+        memoryTitle: "AI drafted budget",
+        memoryBody: text,
+        allocations: buildAllocationDrafts(text, amount),
+      },
+    };
+  }
+
+  const action: ActionValues["action"] =
+    lower.includes("over") ? "overspend" : lower.includes("swap") || lower.includes("move") ? "swap" : "spend";
+  const vault = findVaultForText(text, vaultRows);
+
+  if (action === "swap") {
+    const categories = extractCategoryMentions(text);
+    return {
+      kind: "action",
+      values: {
+        action,
+        vaultId: vault?.id,
+        fromCategoryId: categories[0],
+        toCategoryId: categories[1],
+        amount: amount ?? "",
+        note: text,
+      },
+    };
+  }
+
+  const addresses = extractAddresses(text).filter(
+    (address) => address.toLowerCase() !== vault?.id.toLowerCase(),
+  );
+
+  return {
+    kind: "action",
+    values: {
+      action,
+      vaultId: vault?.id,
+      recipient: addresses[0],
+      categoryId: extractCategoryMentions(text)[0],
+      amount: amount ?? "",
+      note: text,
+    },
+  };
+}
+
+function extractCycle(text: string): keyof typeof BUDGET_CYCLES {
+  if (text.includes("daily")) return "daily";
+  if (text.includes("weekly")) return "weekly";
+  if (text.includes("yearly") || text.includes("annual")) return "yearly";
+  if (text.includes("half") || text.includes("six month")) return "halfYear";
+  return "monthly";
+}
+
+function buildAllocationDrafts(text: string, fallbackAmount?: string) {
+  const explicitAllocations = DEFAULT_CATEGORIES.map((category) => {
+    const match = new RegExp(`${category.name}\\D+(\\d+(?:\\.\\d{1,9})?)`, "i").exec(text);
+    return {
+      categoryId: category.id,
+      amount: match?.[1] ?? "",
+    };
+  });
+  const hasExplicitAllocations = explicitAllocations.some((item) => item.amount);
+
+  if (hasExplicitAllocations || !fallbackAmount) {
+    return explicitAllocations;
+  }
+
+  const splitAmount = Number(fallbackAmount) / DEFAULT_CATEGORIES.length;
+  const amount = Number.isFinite(splitAmount) ? splitAmount.toFixed(2) : "";
+  return DEFAULT_CATEGORIES.map((category) => ({
+    categoryId: category.id,
+    amount,
+  }));
+}
+
+function findVaultForText(text: string, vaultRows: Array<{ id: string; categories: VaultCategoryOption[] }>) {
+  const lower = text.toLowerCase();
+  return vaultRows.find((vault) => lower.includes(vault.id.toLowerCase())) ?? vaultRows[0];
+}
+
+function extractSuiAmount(text: string) {
+  return /(\d+(?:\.\d{1,9})?)\s*sui/i.exec(text)?.[1] ?? "";
+}
+
+function extractAddresses(text: string) {
+  return text.match(/0x[a-fA-F0-9]{16,64}/g) ?? [];
+}
+
+function extractCategoryMentions(text: string) {
+  const lower = text.toLowerCase();
+  return DEFAULT_CATEGORIES.flatMap((category) =>
+    lower.includes(category.name.toLowerCase()) ? [category.id] : [],
   );
 }
 
