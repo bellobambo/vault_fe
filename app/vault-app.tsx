@@ -8,7 +8,7 @@ import {
   useSuiClient,
   useSuiClientQuery,
 } from "@mysten/dapp-kit";
-import { SyncOutlined } from "@ant-design/icons";
+import { CloudDownloadOutlined, SyncOutlined } from "@ant-design/icons";
 import type { SuiEvent } from "@mysten/sui/jsonRpc";
 import {
   Button,
@@ -17,6 +17,7 @@ import {
   Drawer,
   Form,
   Input,
+  Modal,
   Radio,
   Row,
   Select,
@@ -92,6 +93,7 @@ type ActionValues = {
   toCategoryId?: number;
   amount: string;
   note?: string;
+  _skipOverspendCheck?: boolean;
 };
 
 type DrawerKey = "createBudget" | "actions" | "storage" | "history" | "assistant";
@@ -147,6 +149,14 @@ export function VaultApp() {
   const [isRestoring, setIsRestoring] = useState(false);
   const [lastDigest, setLastDigest] = useState<string>();
   const [actionCategories, setActionCategories] = useState<VaultCategoryOption[]>([]);
+  const [overspendModal, setOverspendModal] = useState<{
+    visible: boolean;
+    vaultId: string;
+    categoryId: number;
+    amount: number;
+    categoryName: string;
+    remaining: number;
+  } | null>(null);
 
   // Handle form value changes to auto-calculate Other category in real-time
   function handleCreateFormValuesChange(
@@ -314,7 +324,11 @@ export function VaultApp() {
       title: "Type",
       key: "type",
       width: 100,
-      render: (_value, item) => (item.fields.overspend ? "Overspend" : "Spend"),
+      render: (_value, item) => (
+        <span style={{ color: item.fields.overspend ? "#ff4d4f" : "inherit" }}>
+          {item.fields.overspend ? "Overspend" : "Spend"}
+        </span>
+      ),
     },
     {
       title: "Tx",
@@ -460,6 +474,50 @@ export function VaultApp() {
     if (!account) {
       toast.error("Connect your Sui wallet first.");
       return;
+    }
+
+    // Check for overspend on spend action (but not if already confirmed via modal)
+    if (values.action === "spend" && values.categoryId !== undefined && !values._skipOverspendCheck) {
+      const vault = vaultRows.find((v) => v.id === values.vaultId);
+      
+      if (!vault) {
+        toast.error("Vault not found. Please refresh and try again.");
+        return;
+      }
+
+      const category = vault.categories.find((c) => c.id === values.categoryId);
+      
+      if (!category) {
+        toast.error(`Category ${values.categoryId} not found in vault. Please select a valid category.`);
+        return;
+      }
+
+      const allocation = Number(category.allocation) / 1e9; // Convert from MIST to SUI
+      
+      // Calculate spent in this category from history
+      const spentInCategory = spendHistoryRows
+        .filter(
+          (item) =>
+            readStringField(item.fields.vault_id) === values.vaultId &&
+            Number(item.fields.category) === values.categoryId,
+        )
+        .reduce((sum, item) => sum + (Number(item.fields.amount) || 0), 0) / 1e9;
+
+      const remaining = allocation - spentInCategory;
+      const spendAmount = Number(values.amount);
+
+      if (spendAmount > remaining) {
+        // Show overspend modal with full category details
+        setOverspendModal({
+          visible: true,
+          vaultId: values.vaultId,
+          categoryId: values.categoryId,
+          amount: spendAmount,
+          categoryName: category.name,
+          remaining,
+        });
+        return;
+      }
     }
 
     let memory: MemoryRecord;
@@ -679,7 +737,6 @@ export function VaultApp() {
       <nav className="bg-[#007979] px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex w-full flex-wrap justify-end gap-3">
           <Button onClick={() => setOpenDrawer("createBudget")}>Create Budget</Button>
-          <Button onClick={() => setOpenDrawer("assistant")}>AI Memory</Button>
           <Button
             onClick={() => {
               setMemoryRecords(getMemoryRecordDrafts());
@@ -787,18 +844,6 @@ export function VaultApp() {
                       >
                         Swap
                       </Button>
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          actionForm.setFieldValue("vaultId", vault.id);
-                          actionForm.setFieldValue("action", "overspend");
-                          setActionCategories(vault.categories);
-                          setActiveAction("overspend");
-                          setOpenDrawer("actions");
-                        }}
-                      >
-                        Overspend
-                      </Button>
                     </div>
                   </div>
                 </Card>
@@ -829,6 +874,32 @@ export function VaultApp() {
         onClose={() => setOpenDrawer(null)}
         size="large"
       >
+        <div className="mb-6 p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/10">
+          <Typography.Text className="block mb-2 font-medium text-xs uppercase tracking-wider opacity-60">
+            Draft with AI
+          </Typography.Text>
+          <div className="relative">
+            <Input.TextArea
+              className="theme-control !h-auto"
+              placeholder="e.g. Create a monthly 10 SUI budget split across food, transport..."
+              autoSize={{ minRows: 3, maxRows: 6 }}
+              value={assistantText}
+              onChange={(e) => setAssistantText(e.target.value)}
+            />
+            <div className="mt-2 flex justify-end">
+              <Button
+                type="primary"
+                size="small"
+                loading={isRecalling}
+                onClick={handleAssistantDraft}
+                className="px-6"
+              >
+                Draft
+              </Button>
+            </div>
+          </div>
+        </div>
+
         <Form
           form={createForm}
           layout="vertical"
@@ -945,6 +1016,32 @@ export function VaultApp() {
         }}
         size="large"
       >
+        <div className="mb-6 p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/10">
+          <Typography.Text className="block mb-2 font-medium text-xs uppercase tracking-wider opacity-60">
+            Draft with AI
+          </Typography.Text>
+          <div className="relative">
+            <Input.TextArea
+              className="theme-control !h-auto"
+              placeholder="e.g. Spend 2 SUI for food to 0x123..."
+              autoSize={{ minRows: 3, maxRows: 6 }}
+              value={assistantText}
+              onChange={(e) => setAssistantText(e.target.value)}
+            />
+            <div className="mt-2 flex justify-end">
+              <Button
+                type="primary"
+                size="small"
+                loading={isRecalling}
+                onClick={handleAssistantDraft}
+                className="px-6"
+              >
+                Draft
+              </Button>
+            </div>
+          </div>
+        </div>
+
         <Space className="mb-4" wrap>
           <Tag className="theme-tag">Swap fee {VAULT_FEES_BPS.categorySwap / 100}%</Tag>
           <Tag className="theme-tag">
@@ -965,7 +1062,6 @@ export function VaultApp() {
             >
               <Radio.Button value="spend">Spend</Radio.Button>
               <Radio.Button value="swap">Swap</Radio.Button>
-              <Radio.Button value="overspend">Overspend</Radio.Button>
             </Radio.Group>
           </Form.Item>
 
@@ -1008,63 +1104,6 @@ export function VaultApp() {
             Send {activeAction}
           </Button>
         </Form>
-      </Drawer>
-
-      <Drawer
-        open={openDrawer === "assistant"}
-        title="AI Memory"
-        onClose={() => setOpenDrawer(null)}
-        size="large"
-      >
-        <Form layout="vertical">
-          <Form.Item label="Action or memory query">
-            <Input.TextArea
-              autoSize={{ minRows: 4, maxRows: 8 }}
-              onChange={(event) => setAssistantText(event.target.value)}
-              placeholder="Create a monthly 10 SUI budget split across food, transport, academic, entertainment, and other"
-              value={assistantText}
-            />
-          </Form.Item>
-          <Space className="mb-4" wrap>
-            <Button
-              disabled={!account}
-              loading={isRecalling}
-              onClick={() => handleMemoryRecall()}
-            >
-              Recall
-            </Button>
-            <Button
-              disabled={!account}
-              loading={isRecalling}
-              onClick={handleAssistantDraft}
-              type="primary"
-            >
-              Draft onchain action
-            </Button>
-            <Button
-              disabled={!account}
-              loading={isRestoring}
-              onClick={handleMemoryRestore}
-            >
-              Restore from Walrus
-            </Button>
-          </Space>
-        </Form>
-
-        <div className="grid gap-3">
-          {recalledMemories.map((memory) => (
-            <Card
-              className="compact-card centered-form-card"
-              key={memory.blob_id}
-              title={shortId(memory.blob_id)}
-            >
-              <Typography.Paragraph className="!mb-2 whitespace-pre-wrap">
-                {memory.text}
-              </Typography.Paragraph>
-              <Tag className="theme-tag">Distance {memory.distance.toFixed(4)}</Tag>
-            </Card>
-          ))}
-        </div>
       </Drawer>
 
       <Drawer
@@ -1145,21 +1184,83 @@ export function VaultApp() {
         size={1200}
         // width={1400}
       >
-        <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="mb-6 flex items-center justify-between gap-4">
           <Typography.Text>
-            Contract events for your connected wallet.
+            Contract events and AI memory for your connected wallet.
           </Typography.Text>
-          <Button
-            aria-label="Refresh history"
-            className="history-refresh-button"
-            disabled={!account?.address}
-            icon={<SyncOutlined />}
-            loading={historyEvents.isFetching}
-            onClick={() => historyEvents.refetch()}
-            title="Refresh history"
-            type="text"
+          <Space>
+            <Button
+              disabled={!account}
+              icon={<CloudDownloadOutlined />}
+              loading={isRestoring}
+              onClick={handleMemoryRestore}
+              size="small"
+              type="text"
+            >
+              Restore from Walrus
+            </Button>
+            <Button
+              aria-label="Refresh history"
+              className="history-refresh-button"
+              disabled={!account?.address}
+              icon={<SyncOutlined />}
+              loading={historyEvents.isFetching}
+              onClick={() => historyEvents.refetch()}
+              title="Refresh history"
+              type="text"
+            />
+          </Space>
+        </div>
+
+        <div className="mb-8">
+          <Typography.Text className="block mb-2 font-medium text-xs uppercase tracking-wider opacity-60">
+            Search financial memory
+          </Typography.Text>
+          <Input.Search
+            placeholder="Search your past receipts, notes, and budgets (e.g. 'grocery trip', 'savings plans')..."
+            enterButton="Recall"
+            loading={isRecalling}
+            onSearch={(value) => handleMemoryRecall(value)}
           />
         </div>
+
+        {recalledMemories.length > 0 && (
+          <div className="mb-8 p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/10">
+            <div className="flex items-center justify-between mb-4">
+              <Typography.Text className="font-medium text-xs uppercase tracking-wider opacity-60">
+                Recalled from MemWal
+              </Typography.Text>
+              <Button 
+                type="link" 
+                size="small" 
+                onClick={() => setRecalledMemories([])}
+                className="text-xs"
+              >
+                Clear Search
+              </Button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {recalledMemories.map((memory) => (
+                <Card
+                  className="compact-card recalled-memory-card"
+                  key={memory.blob_id}
+                >
+                  <Typography.Paragraph className="!mb-2 text-sm whitespace-pre-wrap">
+                    {memory.text}
+                  </Typography.Paragraph>
+                  <div className="flex items-center justify-between mt-auto">
+                    <Typography.Text className="text-[10px] opacity-40">
+                      Ref: {shortId(memory.blob_id)}
+                    </Typography.Text>
+                    <Tag className="theme-tag !text-[10px] !m-0 py-0 px-1">
+                      {((1 - memory.distance) * 100).toFixed(0)}% Match
+                    </Tag>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
 
         {!account ? (
           <Card className="compact-card centered-form-card text-center">
@@ -1230,9 +1331,74 @@ export function VaultApp() {
           </Card>
         )}
       </Drawer>
+
+      {/* Overspend Modal */}
+      {overspendModal?.visible && (
+        <Modal
+          title={<span className="text-xl font-bold">Allocation Exhausted</span>}
+          open={true}
+          onCancel={() => {
+            setOverspendModal(null);
+          }}
+          footer={null}
+          centered
+          closable={true}
+          closeIcon={<span className="text-lg">✕</span>}
+          styles={{ body: { minHeight: "140px", display: "flex", flexDirection: "column" } }}
+          width={480}
+        >
+          <div className="flex flex-col justify-between h-full py-2 flex-grow">
+            <div>
+              <Typography.Paragraph className="text-base !mb-2">
+                Your <strong>{overspendModal.categoryName}</strong> allocation ({overspendModal.remaining.toFixed(2)} SUI remaining) is not enough for this transaction ({overspendModal.amount.toFixed(2)} SUI).
+              </Typography.Paragraph>
+              <div className="mb-3 p-2 bg-red-50/10 rounded border border-red-500/20">
+                <Typography.Text className="block text-sm font-medium">
+                  Total deduction: <span className="text-red-400">{(overspendModal.amount * 1.1).toFixed(2)} SUI</span>
+                </Typography.Text>
+              </div>
+              <Typography.Text className="text-xs block leading-tight text-red-500/60 italic">
+                * Overspending incurs a <strong>10% fee</strong> and reduces the total SUI available for your other categories.
+              </Typography.Text>
+            </div>
+
+            <div className="flex gap-2 justify-end items-center mt-4">
+              <Button
+                size="small"
+                type="primary"
+                className="px-4 text-xs h-7"
+                onClick={() => {
+                  setOverspendModal(null);
+                  actionForm.setFieldValue("action", "swap");
+                  setActiveAction("swap");
+                  setOpenDrawer("actions");
+                }}
+              >
+                Swap
+              </Button>
+              <Button
+                size="small"
+                className="px-4 text-xs h-7"
+                onClick={() => {
+                  setOverspendModal(null);
+                  // Proceed with overspend transaction
+                  const currentValues = actionForm.getFieldsValue();
+                  handleVaultAction({
+                    ...currentValues,
+                    action: "overspend",
+                  });
+                }}
+              >
+                Proceed
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
+
 
 type CategorySelectProps = SelectProps<number> & {
   categories?: VaultCategoryOption[];
@@ -1466,7 +1632,14 @@ function getHistoryDetails(item: HistoryEvent) {
       { label: "Amount", value: formatMist(fields.amount) },
       { label: "Fee", value: formatMist(fields.fee) },
       { label: "Recipient", value: shortId(readStringField(fields.recipient) ?? "-") },
-      { label: "Type", value: fields.overspend ? "Overspend" : "Spend" },
+      {
+        label: "Type",
+        value: (
+          <span style={{ color: fields.overspend ? "#ff4d4f" : "inherit" }}>
+            {fields.overspend ? "Overspend" : "Spend"}
+          </span>
+        ) as unknown as string,
+      },
     );
   }
 

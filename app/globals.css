@@ -215,6 +215,26 @@ body {
   align-items: center;
 }
 
+.ai-search-input,
+.ai-search-input .ant-input-wrapper,
+.ai-search-input .ant-input-group,
+.ai-search-input .ant-input,
+.ai-search-input .ant-input-affix-wrapper,
+.ai-search-input .ant-input-search-button,
+.ai-search-input .ant-input-group-addon {
+  height: 40px !important;
+  min-height: 40px !important;
+  line-height: 40px !important;
+}
+
+.ai-search-input .ant-input-search-button {
+  border-left: none !important;
+}
+
+.ai-search-input .ant-input-affix-wrapper {
+  border-right: none !important;
+}
+
 .allocation-group {
   margin-bottom: 24px;
   padding-top: 4px;
