@@ -1,4 +1,4 @@
-export const SUI_NETWORK = "testnet";
+export const SUI_NETWORK: "mainnet" | "testnet" | "devnet" | "localnet" = "testnet";
 
 export const VAULT_PACKAGE_ID =
   "0x6e5fbdaf83d98b2e44c08470a563093184f130fd42f724892167905c43ae06c5";
@@ -54,8 +54,8 @@ export const END_ACTIONS = {
 export const DEFAULT_CATEGORIES = [
   { id: 0, name: "Food" },
   { id: 1, name: "Transport" },
-  { id: 2, name: "Academic" },
-  { id: 3, name: "Entertainment" },
+  { id: 2, name: "Academics" },
+  { id: 3, name: "Entertainment/Utilities" },
   { id: 4, name: "Other" },
 ] as const;
 

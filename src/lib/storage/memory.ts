@@ -5,6 +5,9 @@ export type MemoryRecordInput = {
   kind: MemoryRecordKind;
   title: string;
   body?: string;
+  attachmentName?: string;
+  attachmentType?: string;
+  attachmentDataUrl?: string;
   tags?: string[];
 };
 
@@ -14,6 +17,10 @@ export type MemoryRecord = MemoryRecordInput & {
   createdAt: string;
   memwalJobId?: string;
   walrusBlobId?: string;
+  attachmentWalrusBlobId?: string;
+  attachmentWalrusObjectId?: string;
+  attachmentWalrusEndEpoch?: number;
+  txDigest?: string;
   storage: {
     memwal: "pending" | "accepted" | "saved" | "failed";
     walrus: "pending" | "saved";
@@ -58,7 +65,18 @@ export function saveMemoryRecordDraft(record: MemoryRecord) {
 
 export function updateMemoryRecordDraft(
   id: string,
-  updates: Partial<Pick<MemoryRecord, "memwalJobId" | "walrusBlobId" | "storage">>,
+  updates: Partial<
+    Pick<
+      MemoryRecord,
+      | "memwalJobId"
+      | "walrusBlobId"
+      | "attachmentWalrusBlobId"
+      | "attachmentWalrusObjectId"
+      | "attachmentWalrusEndEpoch"
+      | "txDigest"
+      | "storage"
+    >
+  >,
 ) {
   if (typeof window === "undefined") {
     return;
@@ -119,6 +137,12 @@ export function serializeMemoryRecord(record: MemoryRecord) {
     `Owner: ${record.owner}`,
     `Reference: ${record.memoryRef}`,
     `Created: ${record.createdAt}`,
+    record.attachmentName ? `Attachment: ${record.attachmentName}` : undefined,
+    record.attachmentWalrusBlobId ? `Attachment Walrus blob: ${record.attachmentWalrusBlobId}` : undefined,
+    record.attachmentWalrusObjectId ? `Attachment Walrus object: ${record.attachmentWalrusObjectId}` : undefined,
+    record.attachmentWalrusEndEpoch ? `Attachment Walrus end epoch: ${record.attachmentWalrusEndEpoch}` : undefined,
+    record.walrusBlobId ? `MemWal Walrus blob: ${record.walrusBlobId}` : undefined,
+    record.txDigest ? `Sui transaction: ${record.txDigest}` : undefined,
     record.body ? `Details: ${record.body}` : undefined,
     record.tags?.length ? `Tags: ${record.tags.join(", ")}` : undefined,
   ]

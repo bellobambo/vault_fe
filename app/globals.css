@@ -133,6 +133,19 @@ body {
   text-decoration: underline;
 }
 
+.slush-connect-button.ant-btn-primary {
+  background: var(--vault-primary) !important;
+  border-color: var(--vault-primary) !important;
+  color: var(--vault-accent) !important;
+}
+
+.slush-connect-button.ant-btn-primary:hover,
+.slush-connect-button.ant-btn-primary:focus {
+  background: #006464 !important;
+  border-color: #006464 !important;
+  color: var(--vault-accent) !important;
+}
+
 .compact-card .ant-card-head {
   min-height: 46px;
 }
@@ -158,6 +171,30 @@ body {
   background: var(--vault-primary) !important;
   border-color: #9ca3af !important;
   color: var(--vault-accent) !important;
+}
+
+.sui-usd-rate {
+  display: block;
+  margin: 0 0 14px;
+  text-align: left;
+  color: var(--vault-accent) !important;
+  font-size: 16px;
+  font-weight: 400;
+  opacity: 0.9;
+}
+
+.sui-usd-rate.ant-typography,
+.ant-typography.sui-usd-rate {
+  color: var(--vault-accent) !important;
+}
+
+.usd-estimate {
+  display: block;
+  margin: -14px 0 18px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.78;
 }
 
 .vault-card-actions .ant-btn {
@@ -334,6 +371,232 @@ body {
   color: var(--vault-accent) !important;
 }
 
+.storage-drawer-layout {
+  display: grid;
+  gap: 20px;
+}
+
+.storage-section {
+  display: grid;
+  gap: 14px;
+  border-bottom: 1px solid rgba(0, 121, 121, 0.18);
+  padding-bottom: 20px;
+}
+
+.storage-section:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.storage-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.storage-section-heading .ant-typography {
+  margin: 0 !important;
+}
+
+.storage-section-heading > .ant-typography:last-child {
+  font-size: 13px;
+  opacity: 0.72;
+  text-align: right;
+}
+
+.storage-empty-state {
+  border: 1px dashed rgba(0, 121, 121, 0.35);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.storage-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.storage-upload-row .ant-typography {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-record-table .ant-table-row {
+  cursor: pointer;
+}
+
+.storage-record-table .ant-table-row:hover .ant-table-cell {
+  background: rgba(0, 121, 121, 0.08) !important;
+}
+
+.proof-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.proof-id-control {
+  height: 36px;
+}
+
+.proof-id-control .ant-input {
+  height: 36px;
+  cursor: pointer;
+  border-color: var(--vault-primary) !important;
+  transition: all 0.3s ease;
+}
+
+.proof-id-control .ant-input:hover {
+  text-decoration: underline;
+  border-bottom: 2px solid var(--vault-primary) !important;
+}
+
+.proof-id-input {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.financial-answer-content {
+  display: grid;
+  gap: 14px;
+}
+
+.financial-answer-summary {
+  border: 1px solid rgba(0, 121, 121, 0.14);
+  border-radius: 8px;
+  background: rgba(0, 121, 121, 0.05);
+  padding: 14px;
+}
+
+.financial-answer-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.financial-answer-details.compact {
+  grid-template-columns: 1fr;
+}
+
+.memory-record-modal {
+  display: grid;
+  gap: 18px;
+}
+
+.vault-details-modal {
+  display: grid;
+  gap: 18px;
+}
+
+.vault-details-table {
+  margin-top: 10px;
+}
+
+.memory-record-modal-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.memory-record-modal-meta > div,
+.memory-record-modal-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.memory-record-modal-section {
+  border-top: 1px solid rgba(0, 121, 121, 0.16);
+  padding-top: 14px;
+}
+
+.memory-record-modal-ref {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.recalled-memory-card .ant-card-head-title {
+  min-width: 0;
+}
+
+.recalled-memory-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recalled-memory-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recalled-memory-body {
+  display: grid;
+  gap: 12px;
+}
+
+.recalled-memory-meta {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid rgba(0, 121, 121, 0.18);
+  padding-top: 10px;
+}
+
+.recalled-memory-meta .ant-typography {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.recalled-memory-meta span {
+  font-weight: 700;
+}
+
+.recalled-memory-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 [data-dapp-kit] button {
   border-radius: 8px;
+}
+
+@media (max-width: 560px) {
+  .storage-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .storage-section-heading > .ant-typography:last-child {
+    text-align: left;
+  }
+
+  .storage-upload-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .memory-record-modal-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .financial-answer-details {
+    grid-template-columns: 1fr;
+  }
 }

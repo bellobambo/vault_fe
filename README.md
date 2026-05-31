@@ -186,8 +186,8 @@ Yes. Looking at the ABI/functions, this project is a Sui-based
    * Why? Because we use MemWal/Walrus, the search is "semantic." It knows that "groceries" and "food" are related.
 
   4. The "Optimizer" (Mid-Cycle Adjustment)
-  If you realize you spent too much on "Entertainment" and need more for "Transport," use the AI to swap.
-   * Prompt Example: "Swap 1.5 SUI from Entertainment to Transport."
+  If you realize you spent too much on "Entertainment/Utilities" and need more for "Transport," use the AI to swap.
+   * Prompt Example: "Swap 1.5 SUI from Entertainment/Utilities to Transport."
    * Why? It identifies the correct category IDs for you instantly, reducing the risk of a "Category Not Found" error from the smart contract.
 
   Summary Strategy:

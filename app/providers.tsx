@@ -9,8 +9,6 @@ import { ConfigProvider, App as AntdApp } from "antd";
 import { useState } from "react";
 import { Toaster } from "react-hot-toast";
 
-import { SUI_NETWORK } from "@/src/config/vault";
-
 const { networkConfig } = createNetworkConfig({
   testnet: { network: "testnet", url: getJsonRpcFullnodeUrl("testnet") },
 });
@@ -20,7 +18,7 @@ export function Providers({ children }: Readonly<{ children: React.ReactNode }>)
 
   return (
     <QueryClientProvider client={queryClient}>
-      <SuiClientProvider networks={networkConfig} defaultNetwork={SUI_NETWORK}>
+      <SuiClientProvider networks={networkConfig} defaultNetwork="testnet">
         <WalletProvider autoConnect>
           <ConfigProvider
             theme={{

@@ -1,14 +1,24 @@
 "use client";
 
 import {
-  ConnectButton,
+  useConnectWallet,
   useCurrentAccount,
   useDisconnectWallet,
   useSignAndExecuteTransaction,
   useSuiClient,
   useSuiClientQuery,
+  useWallets,
 } from "@mysten/dapp-kit";
-import { CloudDownloadOutlined, RobotOutlined, SendOutlined, SyncOutlined } from "@ant-design/icons";
+import { registerSlushWallet } from "@mysten/slush-wallet";
+import {
+  CloudDownloadOutlined,
+  ExportOutlined,
+  FileTextOutlined,
+  RobotOutlined,
+  SendOutlined,
+  SyncOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
 import type { SuiEvent } from "@mysten/sui/jsonRpc";
 import {
   Button,
@@ -28,7 +38,7 @@ import {
 } from "antd";
 import type { SelectProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
 import {
@@ -79,10 +89,26 @@ type VaultCategoryOption = {
   allocation: string | number | bigint;
 };
 
+type VaultRow = {
+  id: string;
+  balance: string;
+  spent: string;
+  active: string;
+  categories: VaultCategoryOption[];
+  duration: string;
+  createdAt: string;
+};
+
 type HistoryEvent = {
   event: SuiEvent;
   fields: Record<string, unknown>;
   name: string;
+};
+
+type FinancialMemoryAnswer = {
+  title: string;
+  summary: string;
+  details: Array<{ label: string; value: string }>;
 };
 
 type ActionValues = {
@@ -117,6 +143,32 @@ type RecallApiResponse = {
   };
 };
 
+type WalrusStoreApiResponse = {
+  result: {
+    blobId: string;
+    objectId?: string;
+    endEpoch?: number;
+    size?: number;
+    path: string;
+  };
+};
+
+type WalrusReadApiResponse = {
+  result: {
+    blobId: string;
+    size: number;
+    base64: string;
+  };
+};
+
+type SuiPriceApiResponse = {
+  result: {
+    usd: number;
+    source: string;
+    updatedAt: string;
+  };
+};
+
 const cycleDurationsMs: Record<keyof typeof BUDGET_CYCLES, number> = {
   daily: 24 * 60 * 60 * 1000,
   weekly: 7 * 24 * 60 * 60 * 1000,
@@ -135,21 +187,37 @@ const cycleDurationDays: Record<keyof typeof BUDGET_CYCLES, number> = {
 
 export function VaultApp() {
   const account = useCurrentAccount();
+  const wallets = useWallets();
+  const slushWallet = wallets.find((wallet) => wallet.name.toLowerCase().includes("slush"));
+  const { mutate: connectWallet, isPending: isConnectingWallet } = useConnectWallet();
   const { mutate: disconnect } = useDisconnectWallet();
   const suiClient = useSuiClient();
   const [createForm] = Form.useForm<CreateBudgetValues>();
   const [actionForm] = Form.useForm<ActionValues>();
   const [documentForm] = Form.useForm();
+  const actionAmount = Form.useWatch("amount", actionForm);
+  const documentFileInputRef = useRef<HTMLInputElement>(null);
   const [openDrawer, setOpenDrawer] = useState<DrawerKey | null>(null);
   const [activeAction, setActiveAction] = useState<ActionValues["action"]>("spend");
   const [isAICommanderOpen, setIsAICommanderOpen] = useState(false);
   const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>(getMemoryRecordDrafts);
   const [recalledMemories, setRecalledMemories] = useState<RecalledMemory[]>([]);
+  const [financialMemoryAnswer, setFinancialMemoryAnswer] = useState<FinancialMemoryAnswer | null>(null);
+  const [memoryRecallEmptyMessage, setMemoryRecallEmptyMessage] = useState<string | null>(null);
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [openMemoryRecord, setOpenMemoryRecord] = useState<MemoryRecord | null>(null);
+  const [openVaultDetails, setOpenVaultDetails] = useState<VaultRow | null>(null);
+  const [verifiedWalrusBlobId, setVerifiedWalrusBlobId] = useState<string | null>(null);
+  const [verifiedWalrusSize, setVerifiedWalrusSize] = useState<number | null>(null);
+  const [suiUsdPrice, setSuiUsdPrice] = useState<number | null>(null);
+  const [suiUsdUpdatedAt, setSuiUsdUpdatedAt] = useState<string>();
   const [assistantText, setAssistantText] = useState("");
   const [isRemembering, setIsRemembering] = useState(false);
   const [isRecalling, setIsRecalling] = useState(false);
   const [isExecutingAI, setIsExecutingAI] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [isVerifyingWalrus, setIsVerifyingWalrus] = useState(false);
+  const [lastRestoreSummary, setLastRestoreSummary] = useState<string>();
   const [lastDigest, setLastDigest] = useState<string>();
   const [actionCategories, setActionCategories] = useState<VaultCategoryOption[]>([]);
   const [overspendModal, setOverspendModal] = useState<{
@@ -160,6 +228,46 @@ export function VaultApp() {
     categoryName: string;
     remaining: number;
   } | null>(null);
+
+  useEffect(() => {
+    const registration = registerSlushWallet("Slush");
+    return () => registration?.unregister();
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSuiPrice() {
+      try {
+        const response = await fetch("/api/prices/sui");
+        const payload = (await response.json()) as SuiPriceApiResponse | { error?: string };
+
+        if (!response.ok) {
+          throw new Error("error" in payload && payload.error ? payload.error : "Unable to fetch SUI/USD price.");
+        }
+
+        const result = (payload as SuiPriceApiResponse).result;
+
+        if (isMounted) {
+          setSuiUsdPrice(result.usd);
+          setSuiUsdUpdatedAt(result.updatedAt);
+        }
+      } catch {
+        if (isMounted) {
+          setSuiUsdPrice(null);
+          setSuiUsdUpdatedAt(undefined);
+        }
+      }
+    }
+
+    void loadSuiPrice();
+    const intervalId = window.setInterval(loadSuiPrice, 60_000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   // Handle form value changes to auto-calculate Other category in real-time
   function handleCreateFormValuesChange(
@@ -228,7 +336,7 @@ export function VaultApp() {
       }),
   });
 
-  const vaultRows = useMemo(() => {
+  const vaultRows = useMemo<VaultRow[]>(() => {
     return (
       ownedVaults.data?.data.map((item) => {
         const content = item.data?.content;
@@ -290,6 +398,36 @@ export function VaultApp() {
     () => historyRows.filter((item) => item.name !== "BudgetSpend" && item.name !== "CategorySwap"),
     [historyRows],
   );
+
+  const vaultCategoryBalances = useMemo(() => {
+    const balances = new Map<string, Array<{ id: number; name: string; allocation: string; spent: string; remaining: string }>>();
+
+    for (const vault of vaultRows) {
+      balances.set(
+        vault.id,
+        vault.categories.map((category) => {
+          const allocationMist = BigInt(category.allocation);
+          const spentMist = spendHistoryRows
+            .filter(
+              (item) =>
+                readStringField(item.fields.vault_id) === vault.id &&
+                readNumberField(item.fields.category) === category.id,
+            )
+            .reduce((total, item) => total + BigInt(normalizeMoveScalar(item.fields.amount) ?? 0), BigInt(0));
+
+          return {
+            id: category.id,
+            name: category.name,
+            allocation: formatMist(allocationMist),
+            spent: formatMist(spentMist),
+            remaining: formatMist(allocationMist - spentMist),
+          };
+        }),
+      );
+    }
+
+    return balances;
+  }, [spendHistoryRows, vaultRows]);
 
   const spendHistoryColumns: ColumnsType<HistoryEvent> = [
     {
@@ -391,30 +529,109 @@ export function VaultApp() {
     },
   ];
 
-  async function remember(input: {
+  const memoryRecordColumns: ColumnsType<MemoryRecord> = [
+    {
+      title: "Title",
+      key: "title",
+      render: (_value, record) => (
+        <Space size={8}>
+          <FileTextOutlined />
+          <Typography.Text strong>{record.title}</Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "Type",
+      dataIndex: "kind",
+      width: 110,
+      render: (kind: MemoryRecord["kind"]) => labelize(kind),
+    },
+    {
+      title: "File",
+      key: "file",
+      width: 180,
+      render: (_value, record) => record.attachmentName ?? "Note only",
+    },
+    {
+      title: "Saved",
+      dataIndex: "createdAt",
+      width: 150,
+      render: (createdAt: string) => formatMemoryCreated(createdAt),
+    },
+    {
+      title: "Status",
+      key: "status",
+      width: 150,
+      render: (_value, record) => (
+        <Tag className="theme-tag">
+          {record.attachmentWalrusBlobId && record.walrusBlobId
+            ? "Walrus + MemWal saved"
+            : record.attachmentWalrusBlobId
+              ? "Walrus file saved"
+              : record.walrusBlobId
+                ? "MemWal synced"
+                : `MemWal ${record.storage.memwal}`}
+        </Tag>
+      ),
+    },
+  ];
+
+  function createMemoryDraft(input: {
     kind: "budget" | "receipt" | "document" | "history";
     title?: string;
     body?: string;
+    attachmentName?: string;
+    attachmentType?: string;
+    attachmentDataUrl?: string;
   }) {
-    const record = createMemoryRecord({
+    return createMemoryRecord({
       owner: account?.address,
       kind: input.kind,
       title: input.title?.trim() || `${input.kind} record`,
       body: input.body,
+      attachmentName: input.attachmentName,
+      attachmentType: input.attachmentType,
+      attachmentDataUrl: input.attachmentDataUrl,
       tags: ["vault", SUI_NETWORK],
     });
+  }
 
+  async function persistMemoryRecord(record: MemoryRecord, attachmentFile?: File) {
     saveMemoryRecordDraft(record);
     setMemoryRecords(getMemoryRecordDrafts());
 
+    let recordForMemWal = record;
+
     try {
       setIsRemembering(true);
+
+      if (attachmentFile) {
+        const walrusResult = await storeAttachmentOnWalrus(attachmentFile);
+        recordForMemWal = {
+          ...recordForMemWal,
+          attachmentWalrusBlobId: walrusResult.blobId,
+          attachmentWalrusObjectId: walrusResult.objectId,
+          attachmentWalrusEndEpoch: walrusResult.endEpoch,
+          storage: {
+            ...recordForMemWal.storage,
+            walrus: "saved",
+          },
+        };
+        updateMemoryRecordDraft(recordForMemWal.id, {
+          attachmentWalrusBlobId: recordForMemWal.attachmentWalrusBlobId,
+          attachmentWalrusObjectId: recordForMemWal.attachmentWalrusObjectId,
+          attachmentWalrusEndEpoch: recordForMemWal.attachmentWalrusEndEpoch,
+          storage: recordForMemWal.storage,
+        });
+        setMemoryRecords(getMemoryRecordDrafts());
+      }
+
       const response = await fetch("/api/memwal/remember", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           owner: account?.address,
-          text: serializeMemoryRecord(record),
+          text: serializeMemoryRecord(recordForMemWal),
           wait: true,
         }),
       });
@@ -426,27 +643,31 @@ export function VaultApp() {
 
       const result = (payload as RememberApiResponse).result;
       const savedRecord: MemoryRecord = {
-        ...record,
+        ...recordForMemWal,
         memwalJobId: result.job_id ?? result.id,
         walrusBlobId: result.blob_id,
         storage: {
           memwal: result.blob_id ? "saved" : "accepted",
-          walrus: result.blob_id ? "saved" : "pending",
+          walrus: recordForMemWal.attachmentWalrusBlobId || result.blob_id ? "saved" : "pending",
         },
       };
 
       updateMemoryRecordDraft(savedRecord.id, {
         memwalJobId: savedRecord.memwalJobId,
         walrusBlobId: savedRecord.walrusBlobId,
+        attachmentWalrusBlobId: savedRecord.attachmentWalrusBlobId,
+        attachmentWalrusObjectId: savedRecord.attachmentWalrusObjectId,
+        attachmentWalrusEndEpoch: savedRecord.attachmentWalrusEndEpoch,
+        txDigest: savedRecord.txDigest,
         storage: savedRecord.storage,
       });
       setMemoryRecords(getMemoryRecordDrafts());
       return savedRecord;
     } catch (error) {
-      updateMemoryRecordDraft(record.id, {
+      updateMemoryRecordDraft(recordForMemWal.id, {
         storage: {
           memwal: "failed",
-          walrus: "pending",
+          walrus: recordForMemWal.storage.walrus,
         },
       });
       setMemoryRecords(getMemoryRecordDrafts());
@@ -454,6 +675,29 @@ export function VaultApp() {
     } finally {
       setIsRemembering(false);
     }
+  }
+
+  async function remember(input: {
+    kind: "budget" | "receipt" | "document" | "history";
+    title?: string;
+    body?: string;
+    attachmentName?: string;
+    attachmentType?: string;
+    attachmentDataUrl?: string;
+    attachmentFile?: File;
+  }) {
+    return persistMemoryRecord(createMemoryDraft(input), input.attachmentFile);
+  }
+
+  function saveFailedTransactionMemory(record: MemoryRecord) {
+    saveMemoryRecordDraft({
+      ...record,
+      storage: {
+        memwal: "failed",
+        walrus: "pending",
+      },
+    });
+    setMemoryRecords(getMemoryRecordDrafts());
   }
 
   async function handleCreateBudget(values: CreateBudgetValues) {
@@ -478,27 +722,20 @@ export function VaultApp() {
       BigInt(0),
     );
     const now = Date.now();
-    let memory: MemoryRecord;
-
-    try {
-      memory = await remember({
-        kind: "budget",
-        title: values.memoryTitle || "Budget plan",
-        body: [
-          values.memoryBody,
-          `Cycle: ${values.cycle}`,
-          `Total: ${formatMist(amountMist)}`,
-          `Allocations: ${categories
-            .map((category) => `${category.name} ${formatMist(category.allocationMist)}`)
-            .join(", ")}`,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save memory.");
-      return;
-    }
+    const memory = createMemoryDraft({
+      kind: "budget",
+      title: values.memoryTitle || "Budget plan",
+      body: [
+        values.memoryBody,
+        `Cycle: ${values.cycle}`,
+        `Total: ${formatMist(amountMist)}`,
+        `Allocations: ${categories
+          .map((category) => `${category.name} ${formatMist(category.allocationMist)}`)
+          .join(", ")}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    });
 
     const tx = buildCreateBudgetTransaction({
       amountMist,
@@ -516,9 +753,15 @@ export function VaultApp() {
         onSuccess: (result) => {
           setLastDigest(result.digest);
           toast.success("Budget transaction sent.");
+          void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
+            toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
+          });
           ownedVaults.refetch();
         },
-        onError: (error) => toast.error(error.message),
+        onError: (error) => {
+          saveFailedTransactionMemory(memory);
+          toast.error(error.message);
+        },
       },
     );
   }
@@ -530,10 +773,10 @@ export function VaultApp() {
       return;
     }
 
+    const vault = vaultRows.find((v) => v.id === values.vaultId);
+
     // Check for overspend on spend action (but not if already confirmed via modal)
     if (values.action === "spend" && values.categoryId !== undefined && !values._skipOverspendCheck) {
-      const vault = vaultRows.find((v) => v.id === values.vaultId);
-
       if (!vault) {
         toast.error("Vault not found. Please refresh and try again.");
         onComplete?.();
@@ -577,30 +820,21 @@ export function VaultApp() {
       }
     }
 
-    let memory: MemoryRecord;
-
-    try {
-      memory = await remember({
-        kind: values.action === "spend" ? "receipt" : "history",
-        title: `${values.action} record`,
-        body: [
-          values.note,
-          `Vault: ${values.vaultId}`,
-          `Action: ${values.action}`,
-          `Amount: ${values.amount} SUI`,
-          values.categoryId !== undefined ? `Category: ${values.categoryId}` : undefined,
-          values.fromCategoryId !== undefined ? `From category: ${values.fromCategoryId}` : undefined,
-          values.toCategoryId !== undefined ? `To category: ${values.toCategoryId}` : undefined,
-          values.recipient ? `Recipient: ${values.recipient}` : undefined,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save memory.");
-      onComplete?.();
-      return;
-    }
+    const memory = createMemoryDraft({
+      kind: values.action === "spend" ? "receipt" : "history",
+      title: `${values.action} record`,
+      body: [
+        values.note?.replace(/\s+on\s+0x[a-fA-F0-9]{64}\s*$/, ""), // Remove trailing vault ID from natural language note
+        `Action: ${values.action}`,
+        `Amount: ${values.amount} SUI`,
+        values.categoryId !== undefined ? `Category: ${vault?.categories.find(c => c.id === values.categoryId)?.name || values.categoryId}` : undefined,
+        values.fromCategoryId !== undefined ? `From category: ${vault?.categories.find(c => c.id === values.fromCategoryId)?.name || values.fromCategoryId}` : undefined,
+        values.toCategoryId !== undefined ? `To category: ${vault?.categories.find(c => c.id === values.toCategoryId)?.name || values.toCategoryId}` : undefined,
+        values.recipient ? `Recipient: ${values.recipient}` : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    });
 
     const amountMist = suiToMist(values.amount);
     const tx =
@@ -633,10 +867,14 @@ export function VaultApp() {
         onSuccess: (result) => {
           setLastDigest(result.digest);
           toast.success(`${values.action} transaction sent.`);
+          void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
+            toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
+          });
           ownedVaults.refetch();
           onComplete?.();
         },
         onError: (error) => {
+          saveFailedTransactionMemory(memory);
           toast.error(error.message);
           onComplete?.();
         },
@@ -646,16 +884,32 @@ export function VaultApp() {
 
   async function handleDocumentSave(values: { title: string; body?: string }) {
     try {
+      const attachmentDataUrl = documentFile ? await readFileAsDataUrl(documentFile) : undefined;
+
       await remember({
         kind: "document",
         title: values.title,
         body: values.body,
+        attachmentName: documentFile?.name,
+        attachmentType: documentFile?.type,
+        attachmentDataUrl,
+        attachmentFile: documentFile ?? undefined,
       });
       documentForm.resetFields();
+      setDocumentFile(null);
+      if (documentFileInputRef.current) {
+        documentFileInputRef.current.value = "";
+      }
       toast.success("Document saved to MemWal/Walrus.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save document.");
     }
+  }
+
+  function handleMemoryRecordOpen(record: MemoryRecord) {
+    setVerifiedWalrusBlobId(null);
+    setVerifiedWalrusSize(null);
+    setOpenMemoryRecord(record);
   }
 
   async function handleMemoryRecall(query = assistantText) {
@@ -670,8 +924,19 @@ export function VaultApp() {
       return [];
     }
 
+    const financialAnswer = buildFinancialMemoryAnswer(trimmed, spendHistoryRows, historyRows);
+
+    if (financialAnswer) {
+      setFinancialMemoryAnswer(financialAnswer);
+      setRecalledMemories([]);
+      setMemoryRecallEmptyMessage(null);
+      return [];
+    }
+
     try {
       setIsRecalling(true);
+      setFinancialMemoryAnswer(null);
+      setMemoryRecallEmptyMessage(null);
       const response = await fetch("/api/memwal/recall", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -679,7 +944,7 @@ export function VaultApp() {
           owner: account.address,
           query: trimmed,
           limit: 6,
-          maxDistance: 0.85,
+          maxDistance: 0.45,
         }),
       });
       const payload = (await response.json()) as RecallApiResponse | { error?: string };
@@ -690,6 +955,9 @@ export function VaultApp() {
 
       const memories = (payload as RecallApiResponse).result.results;
       setRecalledMemories(memories);
+      setMemoryRecallEmptyMessage(
+        memories.length === 0 ? `No saved memory matched "${trimmed}".` : null,
+      );
       return memories;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to recall memory.");
@@ -721,13 +989,53 @@ export function VaultApp() {
         throw new Error(payload.error ?? "Unable to restore memory index.");
       }
 
-      toast.success(
-        `Restored ${payload.result?.restored ?? 0}, skipped ${payload.result?.skipped ?? 0}.`,
-      );
+      const restored = payload.result?.restored ?? 0;
+      const skipped = payload.result?.skipped ?? 0;
+      const total = payload.result?.total ?? 0;
+
+      let summary = "";
+      if (total === 0) {
+        summary = "No memories found on the network.";
+      } else if (restored === 0) {
+        summary = `All ${total} memories are already up to date.`;
+      } else {
+        summary = `Successfully synced ${restored} missing memories (found ${total} total).`;
+      }
+
+      setLastRestoreSummary(summary);
+      toast.success(summary);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to restore memory index.");
     } finally {
       setIsRestoring(false);
+    }
+  }
+
+  async function handleVerifyWalrusAttachment(record = openMemoryRecord) {
+    if (!record?.attachmentWalrusBlobId) {
+      toast.error("No attachment Walrus blob ID to verify.");
+      return;
+    }
+
+    try {
+      setIsVerifyingWalrus(true);
+      const response = await fetch(
+        `/api/walrus/read?blobId=${encodeURIComponent(record.attachmentWalrusBlobId)}`,
+      );
+      const payload = (await response.json()) as WalrusReadApiResponse | { error?: string };
+
+      if (!response.ok) {
+        throw new Error("error" in payload && payload.error ? payload.error : "Unable to verify Walrus blob.");
+      }
+
+      const result = (payload as WalrusReadApiResponse).result;
+      setVerifiedWalrusBlobId(result.blobId);
+      setVerifiedWalrusSize(result.size);
+      toast.success(`Verified ${formatBytes(result.size)} from Walrus.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to verify Walrus blob.");
+    } finally {
+      setIsVerifyingWalrus(false);
     }
   }
 
@@ -739,7 +1047,14 @@ export function VaultApp() {
       return;
     }
 
-    await handleMemoryRecall(text);
+    const memories = await handleMemoryRecall(text);
+
+    if (isMemoryLookupIntent(text)) {
+      if (memories.length === 0) {
+        toast.error("No matching memories found.");
+      }
+      return;
+    }
 
     const draft = createActionDraft(text, vaultRows);
 
@@ -781,6 +1096,15 @@ export function VaultApp() {
     toast.success("Wallet address copied.");
   }
 
+  function handleSlushConnect() {
+    if (!slushWallet) {
+      toast.error("Slush wallet is not available in this browser.");
+      return;
+    }
+
+    connectWallet({ wallet: slushWallet });
+  }
+
   return (
     <>
       <header className="theme-navbar sticky top-0 z-20 px-4 py-3 sm:px-6 lg:px-8">
@@ -807,7 +1131,14 @@ export function VaultApp() {
                 <Button onClick={() => disconnect()}>Disconnect</Button>
               </>
             ) : (
-              <ConnectButton connectText="Connect wallet" />
+              <Button
+                className="slush-connect-button"
+                loading={isConnectingWallet}
+                onClick={handleSlushConnect}
+                type="primary"
+              >
+                Connect Slush
+              </Button>
             )}
           </Space>
         </div>
@@ -815,23 +1146,27 @@ export function VaultApp() {
 
       <nav className="bg-[#007979] px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex w-full flex-wrap justify-end gap-3">
-          <Button
-            onClick={() => {
-              createForm.resetFields();
-              setOpenDrawer("createBudget");
-            }}
-          >
-            Create Budget
-          </Button>
-          <Button
-            onClick={() => {
-              setMemoryRecords(getMemoryRecordDrafts());
-              setOpenDrawer("storage");
-            }}
-          >
-            Storage
-          </Button>
-          <Button onClick={() => setOpenDrawer("history")}>History</Button>
+          {account ? (
+            <>
+              <Button
+                onClick={() => {
+                  createForm.resetFields();
+                  setOpenDrawer("createBudget");
+                }}
+              >
+                Create Budget
+              </Button>
+              <Button
+                onClick={() => {
+                  setMemoryRecords(getMemoryRecordDrafts());
+                  setOpenDrawer("storage");
+                }}
+              >
+                Records
+              </Button>
+              <Button onClick={() => setOpenDrawer("history")}>History</Button>
+            </>
+          ) : null}
         </div>
       </nav>
 
@@ -869,8 +1204,7 @@ export function VaultApp() {
               Vault
             </Typography.Title>
             <Typography.Paragraph className="vault-page-description !mx-auto !max-w-xl !text-lg">
-              Split SUI into spending categories and save the budget memory reference for receipts,
-              history, and documents.
+              Help students budget money properly in SUI across daily needs, while keeping receipts, notes, and spending memory together.
             </Typography.Paragraph>
           </section>
         ) : (
@@ -879,6 +1213,7 @@ export function VaultApp() {
               <Typography.Title className="vault-page-title !mb-0" level={2}>
                 My Vault
               </Typography.Title>
+              <SuiUsdRateText price={suiUsdPrice} updatedAt={suiUsdUpdatedAt} />
             </div>
 
             {vaultRows.length > 0 ? (
@@ -939,7 +1274,6 @@ export function VaultApp() {
                       </div>
                       <div className="vault-card-actions flex gap-2 border-t border-[var(--vault-primary)] pt-4">
                         <Button
-                          className="vault-card-action-primary"
                           size="small"
                           onClick={() => {
                             actionForm.setFieldValue("vaultId", vault.id);
@@ -952,6 +1286,7 @@ export function VaultApp() {
                           Spend
                         </Button>
                         <Button
+                          className="vault-card-action-primary"
                           size="small"
                           onClick={() => {
                             actionForm.setFieldValue("vaultId", vault.id);
@@ -963,6 +1298,12 @@ export function VaultApp() {
                         >
                           Swap
                         </Button>
+                        <Button
+                          size="small"
+                          onClick={() => setOpenVaultDetails(vault)}
+                        >
+                          View Details
+                        </Button>
                       </div>
                     </div>
                   </Card>
@@ -971,7 +1312,7 @@ export function VaultApp() {
             ) : (
               <Card className="compact-card centered-form-card text-center">
                 <Typography.Paragraph className="!text-[var(--vault-accent)]">
-                  No vaults yet. Create your first budget vault to get started.
+                  No vaults yet. Create one for everyday student expenses like meals, transport, and fees.
                 </Typography.Paragraph>
               </Card>
             )}
@@ -987,12 +1328,59 @@ export function VaultApp() {
         )}
       </main>
 
+      <Modal
+        footer={null}
+        onCancel={() => setOpenVaultDetails(null)}
+        open={Boolean(openVaultDetails)}
+        title="Budget Details"
+        width={760}
+        style={{ top: 96 }}
+      >
+        {openVaultDetails ? (
+          <div className="vault-details-modal">
+            <div className="memory-record-modal-meta">
+              <div>
+                <Typography.Text type="secondary">Vault</Typography.Text>
+                <Typography.Text strong>{shortId(openVaultDetails.id)}</Typography.Text>
+              </div>
+              <div>
+                <Typography.Text type="secondary">Balance</Typography.Text>
+                <Typography.Text strong>
+                  {formatSuiWithUsd(openVaultDetails.balance, suiUsdPrice)}
+                </Typography.Text>
+              </div>
+              <div>
+                <Typography.Text type="secondary">Spent</Typography.Text>
+                <Typography.Text strong>
+                  {formatSuiWithUsd(openVaultDetails.spent, suiUsdPrice)}
+                </Typography.Text>
+              </div>
+            </div>
+
+            <Table
+              className="vault-details-table"
+              columns={[
+                { title: "Category", dataIndex: "name", key: "name" },
+                { title: "Allocated", dataIndex: "allocation", key: "allocation" },
+                { title: "Spent", dataIndex: "spent", key: "spent" },
+                { title: "Remaining", dataIndex: "remaining", key: "remaining" },
+              ]}
+              dataSource={vaultCategoryBalances.get(openVaultDetails.id) ?? []}
+              pagination={false}
+              rowKey={(category) => category.id}
+              size="small"
+            />
+          </div>
+        ) : null}
+      </Modal>
+
       <Drawer
         open={openDrawer === "createBudget"}
         title="Create Budget Vault"
         onClose={() => setOpenDrawer(null)}
         size="large"
       >
+        <SuiUsdRateText price={suiUsdPrice} updatedAt={suiUsdUpdatedAt} />
         <Form
           form={createForm}
           layout="vertical"
@@ -1072,7 +1460,7 @@ export function VaultApp() {
                   </Form.Item>
                   {category.id === 4 ? (
                     <Typography.Text className="allocation-note">
-                      Other input/amount is the average of the four categories
+                      Other stays within the average of the main categories
                     </Typography.Text>
                   ) : null}
                 </div>
@@ -1088,7 +1476,7 @@ export function VaultApp() {
             </Col>
             <Col xs={24} sm={14}>
               <Form.Item label="Memory note (Optional)" name="memoryBody">
-                <Input className="theme-control" placeholder="What this budget is for" />
+                <Input className="theme-control" placeholder="Food, transport, books, rent..." />
               </Form.Item>
             </Col>
           </Row>
@@ -1109,6 +1497,7 @@ export function VaultApp() {
         }}
         size="large"
       >
+        <SuiUsdRateText price={suiUsdPrice} updatedAt={suiUsdUpdatedAt} />
         <Space className="mb-4" wrap>
           <Tag className="theme-tag">Swap fee {VAULT_FEES_BPS.categorySwap / 100}%</Tag>
           <Tag className="theme-tag">
@@ -1163,8 +1552,9 @@ export function VaultApp() {
           <Form.Item label="Amount" name="amount" rules={[{ required: true }]}>
             <Input suffix="SUI" />
           </Form.Item>
+          <UsdEstimateText amount={actionAmount} price={suiUsdPrice} />
           <Form.Item label="Receipt note" name="note">
-            <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} />
+            <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="Lunch, textbook, transport fare..." />
           </Form.Item>
 
           <Button block htmlType="submit" loading={isPending || isRemembering} type="primary">
@@ -1175,74 +1565,236 @@ export function VaultApp() {
 
       <Drawer
         open={openDrawer === "storage"}
-        title="Receipts And Documents"
+        title="Records & Notes"
         onClose={() => setOpenDrawer(null)}
-        size="large"
+        width={1100}
       >
-        <Typography.Paragraph>
-          Save valuable documents, receipts, and history as memory drafts. The app creates a
-          `memoryRef` that can be attached to Move calls and later backed by MemWal/Walrus storage.
-        </Typography.Paragraph>
-        <Form form={documentForm} layout="vertical" onFinish={handleDocumentSave}>
-          <Form.Item label="Title" name="title" rules={[{ required: true }]}>
-            <Input placeholder="School fee receipt" />
-          </Form.Item>
-          <Form.Item label="Details" name="body">
-            <Input.TextArea autoSize={{ minRows: 4, maxRows: 8 }} />
-          </Form.Item>
-          <Button block htmlType="submit" loading={isRemembering} type="primary">
-            Save reference
-          </Button>
-        </Form>
-
-        <Space className="mt-4" wrap>
-          <Button disabled={!account} loading={isRestoring} onClick={handleMemoryRestore}>
-            Restore from Walrus
-          </Button>
-          <Button
-            disabled={!account}
-            loading={isRecalling}
-            onClick={() => handleMemoryRecall("vault receipts documents budgets history")}
-          >
-            Recall saved memory
-          </Button>
-        </Space>
-
-        <div className="mt-5 grid gap-2">
-          {memoryRecords.map((record) => (
-            <div className="theme-memory-item rounded p-3" key={record.id}>
-              <Typography.Text strong>{record.title}</Typography.Text>
-              <Typography.Text className="block font-mono text-xs">
-                {record.memoryRef}
+        <SuiUsdRateText price={suiUsdPrice} updatedAt={suiUsdUpdatedAt} />
+        <div className="storage-drawer-layout">
+          <section className="storage-section">
+            <div className="storage-section-heading">
+              <Typography.Title level={5}>Add Receipt Or Document</Typography.Title>
+              <Typography.Text>
+                Save a searchable student note for fees, meals, books, transport, or rent.
               </Typography.Text>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Tag className="theme-tag">MemWal {record.storage.memwal}</Tag>
-                <Tag className="theme-tag">Walrus {record.storage.walrus}</Tag>
-                {record.walrusBlobId ? (
-                  <Tag className="theme-tag">Blob {shortId(record.walrusBlobId)}</Tag>
-                ) : null}
+            </div>
+
+            <Form form={documentForm} layout="vertical" onFinish={handleDocumentSave}>
+              <Form.Item label="Title" name="title" rules={[{ required: true }]}>
+                <Input placeholder="School fee receipt" />
+              </Form.Item>
+              <Form.Item label="Details" name="body">
+                <Input.TextArea
+                  autoSize={{ minRows: 3, maxRows: 6 }}
+                  placeholder="Paid 4 SUI for May school fees"
+                />
+              </Form.Item>
+              <div className="storage-upload-row">
+                <input
+                  accept="image/*,.pdf,.txt,.csv,.doc,.docx"
+                  className="hidden-input"
+                  onChange={(event) => setDocumentFile(event.target.files?.[0] ?? null)}
+                  ref={documentFileInputRef}
+                  type="file"
+                />
+                <Button
+                  icon={<UploadOutlined />}
+                  onClick={() => documentFileInputRef.current?.click()}
+                  type="default"
+                >
+                  Upload File
+                </Button>
+                <Typography.Text>
+                  {documentFile ? documentFile.name : "No file selected"}
+                </Typography.Text>
+              </div>
+              <Button block htmlType="submit" loading={isRemembering} type="primary">
+                Save
+              </Button>
+            </Form>
+          </section>
+
+          <section className="storage-section">
+            <div className="storage-section-heading">
+              <Typography.Title level={5}>Saved Records</Typography.Title>
+              <Typography.Text>
+                Click a row to review the note, receipt file, or onchain proof.
+              </Typography.Text>
+            </div>
+
+            <Table
+              className="storage-record-table"
+              columns={memoryRecordColumns}
+              dataSource={memoryRecords.filter((record) => record.title !== "Autonomous vault checkpoint")}
+              locale={{ emptyText: "No saved receipts or documents yet." }}
+              onRow={(record) => ({
+                onClick: () => handleMemoryRecordOpen(record),
+              })}
+              pagination={{ pageSize: 6 }}
+              rowKey={(record) => record.id}
+              scroll={{ x: 720 }}
+              size="small"
+            />
+          </section>
+        </div>
+      </Drawer>
+
+      <Modal
+        footer={
+          openMemoryRecord?.attachmentDataUrl ? (
+            <Space>
+              {openMemoryRecord.attachmentWalrusBlobId ? (
+                <Button
+                  loading={isVerifyingWalrus}
+                  onClick={() => void handleVerifyWalrusAttachment(openMemoryRecord)}
+                >
+                  Verify Walrus
+                </Button>
+              ) : null}
+              {isPreviewableAttachment(openMemoryRecord.attachmentType) ? (
+                <Button onClick={() => openAttachment(openMemoryRecord)}>
+                  Open File
+                </Button>
+              ) : null}
+              <Button
+                onClick={() =>
+                  downloadDataUrl(
+                    openMemoryRecord.attachmentDataUrl ?? "",
+                    openMemoryRecord.attachmentName ?? `${openMemoryRecord.title}.download`,
+                  )
+                }
+                type="primary"
+              >
+                Download
+              </Button>
+            </Space>
+          ) : null
+        }
+        onCancel={() => setOpenMemoryRecord(null)}
+        open={Boolean(openMemoryRecord)}
+        title={<span className="capitalize">{openMemoryRecord?.title}</span>}
+        width={720}
+        zIndex={1700}
+      >
+        {openMemoryRecord ? (
+          <div className="flex flex-col gap-6">
+            <div className="grid grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
+              <div className="flex flex-col gap-1">
+                <Typography.Text type="secondary" className="text-xs uppercase tracking-wider">Type</Typography.Text>
+                <Typography.Text strong>{labelize(openMemoryRecord.kind)}</Typography.Text>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Typography.Text type="secondary" className="text-xs uppercase tracking-wider">Saved</Typography.Text>
+                <Typography.Text strong>{formatMemoryCreated(openMemoryRecord.createdAt)}</Typography.Text>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Typography.Text type="secondary" className="text-xs uppercase tracking-wider">Storage</Typography.Text>
+                <Typography.Text strong>
+                  {openMemoryRecord.attachmentWalrusBlobId && openMemoryRecord.walrusBlobId
+                    ? "Walrus + MemWal saved"
+                    : openMemoryRecord.attachmentWalrusBlobId
+                      ? "Walrus file saved"
+                      : openMemoryRecord.walrusBlobId
+                        ? "MemWal synced"
+                        : `MemWal ${openMemoryRecord.storage.memwal}`}
+                </Typography.Text>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Typography.Text type="secondary" className="text-xs uppercase tracking-wider">MemWal blob</Typography.Text>
+                <Typography.Text strong>
+                  {openMemoryRecord.walrusBlobId ? shortId(openMemoryRecord.walrusBlobId) : "Not saved"}
+                </Typography.Text>
               </div>
             </div>
-          ))}
-        </div>
 
-        {recalledMemories.length > 0 ? (
-          <div className="mt-5 grid gap-3">
-            {recalledMemories.map((memory) => (
-              <Card
-                className="compact-card centered-form-card"
-                key={memory.blob_id}
-                title={`Walrus blob ${shortId(memory.blob_id)}`}
-              >
-                <Typography.Paragraph className="!mb-2 whitespace-pre-wrap">
-                  {memory.text}
+            <div className="flex flex-col gap-2">
+              <Typography.Text type="secondary" className="text-xs uppercase tracking-wider border-b pb-2">Details</Typography.Text>
+              <div className="bg-[#007979]/5 p-4 rounded-md border border-[#007979]/10">
+                <Typography.Paragraph className="!mb-0 whitespace-pre-wrap font-mono text-sm">
+                  {openMemoryRecord.body || "No note details saved for this record."}
                 </Typography.Paragraph>
-                <Tag className="theme-tag">Distance {memory.distance.toFixed(4)}</Tag>
-              </Card>
-            ))}
+              </div>
+            </div>
+
+            {openMemoryRecord.txDigest ? (
+              <div>
+                <a
+                  href={getSuiExplorerTxUrl(openMemoryRecord.txDigest)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[#007979] hover:underline"
+                >
+                  View transaction onchain <ExportOutlined />
+                </a>
+              </div>
+            ) : null}
+
+            {openMemoryRecord.walrusBlobId ? (
+              <div className="flex flex-col gap-2">
+                <Typography.Text type="secondary" className="text-xs uppercase tracking-wider border-b pb-2">MemWal Walrus blob ID</Typography.Text>
+                <Typography.Text
+                  className="break-all font-mono text-xs cursor-pointer hover:text-[#007979] hover:underline transition-colors"
+                  onClick={() => void copyText(openMemoryRecord.walrusBlobId ?? "")}
+                  title="Click to copy"
+                >
+                  {openMemoryRecord.walrusBlobId}
+                </Typography.Text>
+              </div>
+            ) : null}
+
+            {openMemoryRecord.attachmentWalrusBlobId ? (
+              <div className="flex flex-col gap-2">
+                <Typography.Text type="secondary" className="text-xs uppercase tracking-wider border-b pb-2">Attachment Walrus blob ID</Typography.Text>
+                <Typography.Text
+                  className="break-all font-mono text-xs cursor-pointer hover:text-[#007979] hover:underline transition-colors"
+                  onClick={() => void copyText(openMemoryRecord.attachmentWalrusBlobId ?? "")}
+                  title="Click to copy"
+                >
+                  {openMemoryRecord.attachmentWalrusBlobId}
+                </Typography.Text>
+                {openMemoryRecord.attachmentWalrusObjectId ? (
+                  <Typography.Text
+                    className="break-all font-mono text-xs cursor-pointer hover:text-[#007979] hover:underline transition-colors mt-2"
+                    onClick={() => void copyText(openMemoryRecord.attachmentWalrusObjectId ?? "")}
+                    title="Click to copy"
+                  >
+                    {openMemoryRecord.attachmentWalrusObjectId}
+                  </Typography.Text>
+                ) : null}
+                <div className="proof-status-row">
+                  <Tag className="theme-tag">
+                    {openMemoryRecord.attachmentWalrusEndEpoch
+                      ? `Expires epoch ${openMemoryRecord.attachmentWalrusEndEpoch}`
+                      : "Stored on Walrus"}
+                  </Tag>
+                  <Button
+                    loading={isVerifyingWalrus}
+                    onClick={() => void handleVerifyWalrusAttachment(openMemoryRecord)}
+                    size="small"
+                  >
+                    Read From Walrus
+                  </Button>
+                </div>
+                {verifiedWalrusBlobId === openMemoryRecord.attachmentWalrusBlobId && verifiedWalrusSize !== null ? (
+                  <Typography.Text className="text-xs text-[#007979]">
+                    Verified read: {formatBytes(verifiedWalrusSize)}
+                  </Typography.Text>
+                ) : null}
+              </div>
+            ) : null}
+
+            {openMemoryRecord.attachmentName ? (
+              <div className="flex flex-col gap-2">
+                <Typography.Text type="secondary" className="text-xs uppercase tracking-wider border-b pb-2">Attachment</Typography.Text>
+                <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-md border border-gray-100">
+                  <FileTextOutlined />
+                  <Typography.Text strong>{openMemoryRecord.attachmentName}</Typography.Text>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
-      </Drawer>
+      </Modal>
 
       <Drawer
         open={openDrawer === "history"}
@@ -1251,10 +1803,8 @@ export function VaultApp() {
         size={1200}
       // width={1400}
       >
-        <div className="mb-6 flex items-center justify-between gap-4">
-          <Typography.Text>
-            Contract events and AI memory for your connected wallet.
-          </Typography.Text>
+        <SuiUsdRateText price={suiUsdPrice} updatedAt={suiUsdUpdatedAt} />
+        <div className="mb-6 flex items-center justify-end gap-4">
           <Space>
             <Button
               disabled={!account}
@@ -1286,7 +1836,7 @@ export function VaultApp() {
           <div className="relative p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/20 history-search-area">
             <Input.TextArea
               className="intention-textarea !bg-white"
-              placeholder="Search your past receipts, notes, and budgets (e.g. 'grocery trip', 'savings plans')..."
+              placeholder="Search past school fees, lunch receipts, transport fares, or allowance notes..."
               autoSize={{ minRows: 4, maxRows: 15 }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -1311,41 +1861,36 @@ export function VaultApp() {
           </div>
         </div>
 
-        {recalledMemories.length > 0 && (
+        {(financialMemoryAnswer || memoryRecallEmptyMessage || recalledMemories.length > 0) && (
           <div className="mb-8 p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/10">
             <div className="flex items-center justify-between mb-4">
               <Typography.Text className="font-medium text-xs uppercase tracking-wider opacity-60">
-                Recalled from MemWal
+                {financialMemoryAnswer ? "History Answer" : "Recalled from MemWal"}
               </Typography.Text>
               <Button
                 type="link"
                 size="small"
-                onClick={() => setRecalledMemories([])}
+                onClick={() => {
+                  setFinancialMemoryAnswer(null);
+                  setRecalledMemories([]);
+                  setMemoryRecallEmptyMessage(null);
+                }}
                 className="text-xs"
               >
                 Clear Search
               </Button>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {recalledMemories.map((memory) => (
-                <Card
-                  className="compact-card recalled-memory-card"
-                  key={memory.blob_id}
-                >
-                  <Typography.Paragraph className="!mb-2 text-sm whitespace-pre-wrap">
-                    {memory.text}
-                  </Typography.Paragraph>
-                  <div className="flex items-center justify-between mt-auto">
-                    <Typography.Text className="text-[10px] opacity-40">
-                      Ref: {shortId(memory.blob_id)}
-                    </Typography.Text>
-                    <Tag className="theme-tag !text-[10px] !m-0 py-0 px-1">
-                      {((1 - memory.distance) * 100).toFixed(0)}% Match
-                    </Tag>
-                  </div>
-                </Card>
-              ))}
-            </div>
+            {financialMemoryAnswer ? (
+              <FinancialAnswerCard answer={financialMemoryAnswer} />
+            ) : null}
+            {memoryRecallEmptyMessage ? (
+              <Card className="compact-card centered-form-card text-center">
+                <Typography.Paragraph className="!mb-0">
+                  {memoryRecallEmptyMessage}
+                </Typography.Paragraph>
+              </Card>
+            ) : null}
+            <MemoryRecallResults memories={recalledMemories} />
           </div>
         )}
 
@@ -1440,11 +1985,15 @@ export function VaultApp() {
           if (!isExecutingAI) {
             setIsAICommanderOpen(false);
             setAssistantText("");
+            setRecalledMemories([]);
+            setFinancialMemoryAnswer(null);
+            setMemoryRecallEmptyMessage(null);
           }
         }}
         footer={null}
         centered
         width={700}
+        zIndex={1800}
         closable={!isExecutingAI}
         styles={{
           body: { minHeight: "300px" }
@@ -1455,15 +2004,13 @@ export function VaultApp() {
             <Input.TextArea
               className="intention-textarea !bg-white"
               disabled={isExecutingAI}
-              placeholder="e.g. 'Spend 2 SUI on Food', 'Swap 1 SUI from Rent to Other', or 'Create a 10 SUI budget'..."
+              placeholder="e.g. 'send 0x... 0.001 for food', 'swap 1 from entertainment/utilities to transport', or 'create a 10 SUI monthly budget'..."
               autoSize={{ minRows: 5, maxRows: 40 }}
               value={assistantText}
               onChange={(e) => setAssistantText(e.target.value)}
             />
             <div className="mt-4 flex justify-between items-start gap-4">
-              <div className="flex-grow">
-
-              </div>
+              <div className="flex-grow" />
               <Button
                 type="primary"
                 icon={<SendOutlined />}
@@ -1550,6 +2097,161 @@ export function VaultApp() {
 type CategorySelectProps = SelectProps<number> & {
   categories?: VaultCategoryOption[];
 };
+
+type ParsedRecalledMemory = {
+  title: string;
+  kind?: string;
+  details?: string;
+  action?: string;
+  amount?: string;
+  category?: string;
+};
+
+function SuiUsdRateText({
+  price,
+  updatedAt,
+}: {
+  price: number | null;
+  updatedAt?: string;
+}) {
+  return (
+    <Typography.Text className="sui-usd-rate" style={{ color: "var(--vault-accent)" }}>
+      {price
+        ? `1 SUI ≈ ${formatUsd(price)}${updatedAt ? ` · ${formatRateUpdatedAt(updatedAt)}` : ""}`
+        : "SUI/USD estimate unavailable"}
+    </Typography.Text>
+  );
+}
+
+function UsdEstimateText({
+  amount,
+  price,
+}: {
+  amount: unknown;
+  price: number | null;
+}) {
+  const suiAmount = parseSuiNumberInput(amount);
+
+  if (!price || suiAmount === null) {
+    return null;
+  }
+
+  return (
+    <Typography.Text className="usd-estimate">
+      ≈ {formatUsd(suiAmount * price)}
+    </Typography.Text>
+  );
+}
+
+function FinancialAnswerCard({
+  answer,
+  className,
+  compact = false,
+}: {
+  answer: FinancialMemoryAnswer;
+  className?: string;
+  compact?: boolean;
+}) {
+  return (
+    <Card
+      className={["compact-card centered-form-card financial-answer-card", className]
+        .filter(Boolean)
+        .join(" ")}
+      title={answer.title}
+    >
+      <div className="financial-answer-content">
+        <div className="financial-answer-summary">
+          <Typography.Paragraph className="!mb-0 whitespace-pre-wrap">
+            {answer.summary}
+          </Typography.Paragraph>
+        </div>
+        <div className={compact ? "financial-answer-details compact" : "financial-answer-details"}>
+          {answer.details.map((detail) => (
+            <div className="history-detail" key={detail.label}>
+              <Typography.Text type="secondary">{detail.label}</Typography.Text>
+              <Typography.Text className="history-detail-value">
+                {detail.value}
+              </Typography.Text>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function MemoryRecallResults({
+  compact = false,
+  memories,
+}: {
+  compact?: boolean;
+  memories: RecalledMemory[];
+}) {
+  if (memories.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className={compact ? "mt-4 grid gap-3" : "grid gap-3 sm:grid-cols-2 lg:grid-cols-3"}>
+      {memories.map((memory) => {
+        const parsed = parseRecalledMemory(memory.text);
+
+        return (
+          <Card
+            className="compact-card recalled-memory-card"
+            key={memory.blob_id}
+            title={
+              <div className="recalled-memory-title">
+                <span>{parsed.title}</span>
+                {parsed.kind ? <Tag className="theme-tag">{labelize(parsed.kind)}</Tag> : null}
+              </div>
+            }
+          >
+            <div className="recalled-memory-body">
+              {parsed.details ? (
+                <Typography.Paragraph className="!mb-0 whitespace-pre-wrap">
+                  {parsed.details}
+                </Typography.Paragraph>
+              ) : (
+                <Typography.Paragraph className="!mb-0 whitespace-pre-wrap">
+                  {memory.text}
+                </Typography.Paragraph>
+              )}
+
+              <div className="recalled-memory-meta">
+                {parsed.action ? (
+                  <Typography.Text>
+                    Action: <span>{labelize(parsed.action)}</span>
+                  </Typography.Text>
+                ) : null}
+                {parsed.amount ? (
+                  <Typography.Text>
+                    Amount: <span>{parsed.amount}</span>
+                  </Typography.Text>
+                ) : null}
+                {parsed.category ? (
+                  <Typography.Text>
+                    Category: <span>{formatRecalledCategory(parsed.category)}</span>
+                  </Typography.Text>
+                ) : null}
+                <Typography.Text>
+                  Walrus blob: <span>{shortId(memory.blob_id)}</span>
+                </Typography.Text>
+              </div>
+
+              <div className="recalled-memory-footer">
+                <span />
+                <Tag className="theme-tag">
+                  {formatRecallMatch(memory.distance)} match
+                </Tag>
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
 
 function CategorySelect({ categories = [], ...props }: CategorySelectProps) {
   const categoryOptions = categories.length > 0 ? categories : DEFAULT_CATEGORIES;
@@ -1716,16 +2418,16 @@ function extractSuiAmount(text: string) {
   const suiMatch = /(\d+(?:\.\d{1,9})?)\s*sui/i.exec(text);
   if (suiMatch) return suiMatch[1];
 
-  // 2. Try "spend/swap/budget 1.5" format
-  const actionMatch = /(?:spend|swap|budget|amount|of)\s+(\d+(?:\.\d{1,9})?)/i.exec(text);
+  // 2. Try "spend/swap/send/pay 1.5" format
+  const actionMatch = /(?:spend|swap|send|pay|budget|amount)\s+(\d+(?:\.\d{1,9})?)/i.exec(text);
   if (actionMatch) return actionMatch[1];
 
-  // 3. Fallback: find the first decimal or number that isn't part of an 0x address
-  // We strip addresses first to avoid confusion
-  const textWithoutAddresses = text.replace(/0x[a-fA-F0-9]{16,64}/g, "");
-  const fallbackMatch = /(\d+(?:\.\d{1,9})?)/.exec(textWithoutAddresses);
+  // 3. Try "send 0x... 0.001 for food" format. Strip addresses first so
+  // address digits are not mistaken for amounts.
+  const textWithoutAddresses = text.replace(/0x[a-fA-F0-9]{16,64}/g, " ");
+  const fallbackMatch = /\b(\d+(?:\.\d{1,9})?)\b/.exec(textWithoutAddresses);
 
-  return fallbackMatch ? fallbackMatch[1] : "";
+  return fallbackMatch?.[1] ?? "";
 }
 
 function extractAddresses(text: string) {
@@ -1737,6 +2439,158 @@ function extractCategoryMentions(text: string) {
   return DEFAULT_CATEGORIES.flatMap((category) =>
     lower.includes(category.name.toLowerCase()) ? [category.id] : [],
   );
+}
+
+function isMemoryLookupIntent(text: string) {
+  const lower = text.toLowerCase();
+  const hasMemoryVerb =
+    /\b(recall|remember|search|find|show|what|when|where|how|total|history|receipt|document|note|memory|memories)\b/.test(
+      lower,
+    );
+  const hasTransactionVerb = /\b(spend|send|pay|swap|move|create|budget|split|overspend)\b/.test(lower);
+  const asksQuestion = /\b(how much|what|when|where|total|history|so far)\b/.test(lower);
+
+  return hasMemoryVerb && (!hasTransactionVerb || asksQuestion);
+}
+
+function buildFinancialMemoryAnswer(
+  query: string,
+  spendRows: HistoryEvent[],
+  historyRows: HistoryEvent[],
+): FinancialMemoryAnswer | null {
+  const lower = query.toLowerCase();
+  const dateAnswer = buildHistoryDateAnswer(query, historyRows);
+
+  if (dateAnswer) {
+    return dateAnswer;
+  }
+
+  const asksForSpendTotal =
+    /\b(how much|total|sum|so far|spent|spend|spending)\b/.test(lower) &&
+    /\b(spent|spend|spending|transaction|transactions)\b/.test(lower);
+
+  if (!asksForSpendTotal) {
+    return null;
+  }
+
+  const category = DEFAULT_CATEGORIES.find((item) => lower.includes(item.name.toLowerCase()));
+  const matchingRows = category
+    ? spendRows.filter((item) => readNumberField(item.fields.category) === category.id)
+    : spendRows;
+  const totalMist = matchingRows.reduce(
+    (total, item) => total + BigInt(normalizeMoveScalar(item.fields.amount) ?? 0),
+    BigInt(0),
+  );
+  const scope = category ? `${category.name} spending` : "spending";
+
+  return {
+    title: `Total ${scope}`,
+    summary: `You have spent ${formatMist(totalMist)}${category ? ` on ${category.name}` : ""} across ${matchingRows.length} ${matchingRows.length === 1 ? "transaction" : "transactions"}.`,
+    details: [
+      { label: "Category", value: category?.name ?? "All categories" },
+      { label: "Transactions", value: String(matchingRows.length) },
+      { label: "Total spent", value: formatMist(totalMist) },
+    ],
+  };
+}
+
+function buildHistoryDateAnswer(query: string, historyRows: HistoryEvent[]): FinancialMemoryAnswer | null {
+  const targetDate = parseQueryDate(query);
+
+  if (!targetDate) {
+    return null;
+  }
+
+  const matchingRows = historyRows.filter((item) => {
+    const timestamp = parseTimestampMs(
+      item.event.timestampMs ?? readStringField(readEventFields(item.event.parsedJson).timestamp_ms),
+    );
+
+    if (timestamp === null) {
+      return false;
+    }
+
+    const eventDate = new Date(timestamp);
+    return (
+      eventDate.getFullYear() === targetDate.getFullYear() &&
+      eventDate.getMonth() === targetDate.getMonth() &&
+      eventDate.getDate() === targetDate.getDate()
+    );
+  });
+
+  if (matchingRows.length === 0) {
+    return {
+      title: `Activity on ${formatDateForAnswer(targetDate)}`,
+      summary: `No vault activity was found on ${formatDateForAnswer(targetDate)}.`,
+      details: [{ label: "Events", value: "0" }],
+    };
+  }
+
+  return {
+    title: `Activity on ${formatDateForAnswer(targetDate)}`,
+    summary: matchingRows.map(formatHistoryAnswerRow).join("\n"),
+    details: [
+      { label: "Events", value: String(matchingRows.length) },
+      {
+        label: "Total spent",
+        value: formatMist(
+          matchingRows
+            .filter((item) => item.name === "BudgetSpend")
+            .reduce((total, item) => total + BigInt(normalizeMoveScalar(item.fields.amount) ?? 0), BigInt(0)),
+        ),
+      },
+    ],
+  };
+}
+
+function parseQueryDate(query: string) {
+  const match = /\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.exec(query);
+
+  if (!match) {
+    return null;
+  }
+
+  const monthIndex = [
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+  ].findIndex((month) => match[2].toLowerCase().startsWith(month));
+
+  if (monthIndex === -1) {
+    return null;
+  }
+
+  return new Date(new Date().getFullYear(), monthIndex, Number(match[1]));
+}
+
+function formatDateForAnswer(date: Date) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function formatHistoryAnswerRow(item: HistoryEvent) {
+  const vault = shortId(readStringField(item.fields.vault_id) ?? "-");
+
+  if (item.name === "BudgetSpend") {
+    return `Vault ${vault}: spent ${formatMist(item.fields.amount)} from ${formatCategoryName(item.fields.category)} to ${shortId(readStringField(item.fields.recipient) ?? "-")}.`;
+  }
+
+  if (item.name === "CategorySwap") {
+    return `Vault ${vault}: swapped ${formatMist(item.fields.amount)} from ${formatCategoryName(item.fields.from_category)} to ${formatCategoryName(item.fields.to_category)}.`;
+  }
+
+  return `Vault ${vault}: ${formatEventName(item.name)}.`;
 }
 
 function parseVaultCategories(value: unknown): VaultCategoryOption[] {
@@ -1936,6 +2790,191 @@ function formatCloseAction(value: unknown) {
 
 function labelize(value: string) {
   return value.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function parseRecalledMemory(text: string): ParsedRecalledMemory {
+  const fields = new Map<string, string>();
+
+  for (const line of text.split("\n")) {
+    const [label, ...rest] = line.split(":");
+    const value = rest.join(":").trim();
+
+    if (!value) {
+      continue;
+    }
+
+    const normalizedLabel = label.trim().toLowerCase();
+    fields.set(normalizedLabel, value);
+  }
+
+  return {
+    title: fields.get("vault memory") ?? "Vault memory",
+    kind: fields.get("kind"),
+    details: fields.get("details"),
+    action: fields.get("action"),
+    amount: fields.get("amount"),
+    category: fields.get("category"),
+  };
+}
+
+function formatRecalledCategory(value: string) {
+  const categoryId = Number(value);
+
+  if (!Number.isFinite(categoryId)) {
+    return value;
+  }
+
+  return DEFAULT_CATEGORIES.find((category) => category.id === categoryId)?.name ?? value;
+}
+
+function readFileAsDataUrl(file: File) {
+  const maxBytes = 1.5 * 1024 * 1024;
+
+  if (file.size > maxBytes) {
+    throw new Error("Upload a file smaller than 1.5 MB.");
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Unable to read file."));
+    };
+    reader.onerror = () => reject(new Error("Unable to read file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function storeAttachmentOnWalrus(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch("/api/walrus/store", {
+    method: "POST",
+    body: formData,
+  });
+  const payload = (await response.json()) as WalrusStoreApiResponse | { error?: string };
+
+  if (!response.ok) {
+    throw new Error("error" in payload && payload.error ? payload.error : "Unable to store file on Walrus.");
+  }
+
+  return (payload as WalrusStoreApiResponse).result;
+}
+
+async function copyText(value: string) {
+  if (!value) {
+    return;
+  }
+
+  await navigator.clipboard.writeText(value);
+  toast.success("Copied.");
+}
+
+function isPreviewableAttachment(type?: string) {
+  return Boolean(type && (type.startsWith("image/") || type === "application/pdf" || type.startsWith("text/")));
+}
+
+function openAttachment(record: MemoryRecord) {
+  if (!record.attachmentDataUrl) {
+    return;
+  }
+
+  window.open(record.attachmentDataUrl, "_blank", "noopener,noreferrer");
+}
+
+function downloadDataUrl(dataUrl: string, filename: string) {
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function formatMemoryCreated(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(value / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function formatUsd(value: number) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value >= 1 ? 2 : 4,
+  }).format(value);
+}
+
+function formatSuiWithUsd(value: string, price: number | null) {
+  if (!price) {
+    return value;
+  }
+
+  const amount = parseSuiNumberInput(value);
+  return amount === null ? value : `${value} (${formatUsd(amount * price)})`;
+}
+
+function formatRateUpdatedAt(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "live estimate";
+  }
+
+  return `updated ${new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)}`;
+}
+
+function parseSuiNumberInput(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const match = /-?\d+(?:\.\d+)?/.exec(value.replace(/,/g, ""));
+  const parsed = match ? Number(match[0]) : Number.NaN;
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getSuiExplorerTxUrl(digest: string) {
+  return `https://${SUI_NETWORK === "mainnet" ? "" : SUI_NETWORK + "."}suivision.xyz/txblock/${digest}`;
+}
+
+function formatRecallMatch(distance: number) {
+  const score = Math.max(0, Math.min(100, (1 - distance) * 100));
+  return `${score.toFixed(0)}%`;
 }
 
 function formatDays(days: number) {
