@@ -1144,7 +1144,7 @@ export function VaultApp() {
         </div>
       </header>
 
-      <nav className="bg-[#007979] px-4 py-3 sm:px-6 lg:px-8">
+      <nav className="vault-nav-pattern px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex w-full flex-wrap justify-end gap-3">
           {account ? (
             <>
@@ -1197,7 +1197,7 @@ export function VaultApp() {
         onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
       />
 
-      <main className="min-h-[calc(100vh-116px)] bg-[#007979] px-4 py-8 text-[var(--vault-accent)] sm:px-6">
+      <main className="vault-main min-h-[calc(100vh-116px)] bg-[#007979] px-4 py-8 text-[var(--vault-accent)] sm:px-6">
         {!account ? (
           <section className="vault-disconnected mx-auto flex min-h-[calc(100vh-180px)] w-full max-w-3xl flex-col items-center justify-center text-center">
             <Typography.Title className="vault-page-title !mb-3" level={1}>
