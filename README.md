@@ -1,196 +1,175 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vault
 
-## Getting Started
+Vault is a Sui-based budgeting app that helps students budget money properly in SUI.
 
-First, run the development server:
+The app lets a user lock SUI into a smart contract vault, split that SUI into spending categories, and then spend from those categories with onchain rules. It also stores receipts, notes, transaction memory, and uploaded documents using Walrus and MemWal so the user can search and recover their financial memory later.
+
+## Problem
+
+Students often receive money in chunks, such as allowance, school fees, or support for daily expenses. After that, it is easy to lose track of where the money goes.
+
+Most budgeting tools only track spending after the money is already gone. Vault tries to make the money itself programmable:
+
+- split money into clear categories
+- enforce category spending onchain
+- record receipts and notes
+- remember past spending with AI memory
+- show SUI values in USD for easier understanding
+
+## What Vault Does
+
+1. A user connects a Slush wallet.
+2. The user creates a budget vault by depositing SUI.
+3. The SUI is split into categories:
+   - Food
+   - Transport
+   - Academics
+   - Entertainment/Utilities
+   - Other
+4. The user can spend from a category.
+5. The user can swap unused allocation between categories.
+6. If enabled, the user can overspend with a contract-controlled fee.
+7. The app saves transaction notes and receipts to MemWal/Walrus.
+8. The user can search past receipts, notes, and spending history later.
+
+## Why Sui
+
+Vault uses Sui because Sui assets are objects, not just balances. This makes it a good fit for programmable budgeting.
+
+The budget vault is an onchain object that owns and manages SUI. The Move contract controls who can spend, which category the spend comes from, and what happens when the user swaps or overspends.
+
+## Smart Contract
+
+- Contract repo: https://github.com/bellobambo/vault-sui
+- Network: Sui Testnet
+- Package/program ID:
+
+```text
+0x6e5fbdaf83d98b2e44c08470a563093184f130fd42f724892167905c43ae06c5
+```
+
+Main contract functions used by the frontend:
+
+- `create_budget`
+- `spend`
+- `swap_categories`
+- `overspend`
+
+## Walrus and MemWal
+
+Vault uses Walrus and MemWal for persistent financial memory.
+
+- MemWal stores searchable memories for budgets, receipts, and spending notes.
+- Walrus stores uploaded receipt/document files.
+- Saved records show both the MemWal Walrus blob ID and direct attachment Walrus blob ID.
+- Users can restore memory from Walrus.
+- Users can verify/read stored Walrus blobs from the app.
+
+This means receipts and budget context are not only stored in the browser. They can persist across sessions and be recalled later.
+
+## AI Intent Flow
+
+Vault includes an intent box for faster actions.
+
+Example spend prompts:
+
+```text
+send 0xRECIPIENT 0.001 for food
+spend 0.5 SUI from transport to 0xRECIPIENT
+```
+
+Example swap prompts:
+
+```text
+swap 1 from entertainment/utilities to transport
+move 0.5 from food to academics
+```
+
+The app parses the user intent and fills the transaction form.
+
+## SUI/USD Conversion
+
+The app fetches a live SUI/USD estimate and shows:
+
+- the current `1 SUI ≈ USD` rate
+- USD estimates below spend/swap amount inputs
+- USD values beside budget balance and spent amounts
+
+This helps users understand the real-world value of their SUI budget.
+
+## Tracks Fit
+
+### DeFi & Payments
+
+Vault fits the DeFi & Payments track because it turns simple payments into programmable financial actions.
+
+- SUI is locked into an onchain vault.
+- Spending is controlled by category rules.
+- Swapping reallocates budget mid-cycle.
+- Overspending is enforced by contract logic and fees.
+- The app gives users a simple financial interface for managing funds.
+
+### Walrus
+
+Vault fits the Walrus track because it gives the finance workflow persistent memory and artifact storage.
+
+- Receipts and documents are stored on Walrus.
+- Budget and transaction memories are stored with MemWal.
+- Users can restore memory and verify stored blob IDs.
+- The AI-style memory layer makes old spending context searchable.
+
+## Tech Stack
+
+- Next.js
+- React
+- TypeScript
+- Ant Design
+- Sui dApp Kit
+- Sui Move contract
+- Walrus
+- MemWal
+
+## Environment Variables
+
+Create a `.env` file with:
+
+```bash
+MEMWAL_ACCOUNT_ID=
+MEMWAL_PRIVATE_KEY=
+MEMWAL_SERVER_URL=
+```
+
+Walrus CLI must also be configured locally for Testnet if you want direct file uploads through the app.
+
+## Run Locally
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the dev server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Useful Scripts
 
-## Learn More
+```bash
+npm run dev
+npm run build
+npm run lint
+npm run codegen
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Status
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
-
-
-
-Yes. Looking at the ABI/functions, this project is a Sui-based
-  budgeting vault app.
-
-  The core idea: a user locks SUI into a BudgetVault, splits that SUI
-  across spending categories, then spends from those categories over a
-  fixed time period. It is like an onchain personal finance envelope
-  system.
-
-  What It Does
-
-  The user creates a budget:
-
-  Deposit 10 SUI
-  Cycle: Monthly
-  Categories:
-  - Food: 3 SUI
-  - Transport: 2 SUI
-  - Rent: 5 SUI
-
-  The contract stores that budget onchain as a BudgetVault.
-
-  Then the user can:
-
-  - Spend from a category
-  - Move unused allocation between categories
-  - Overspend if enabled, with a fee
-  - Close the budget when the cycle ends
-  - Save leftover funds into a SavingsVault
-  - Withdraw saved funds later
-  - Track spending, fees, remaining category balances, and events
-
-  Why It Could Be Useful
-
-  It can be useful as a Web3 personal finance app where funds are not
-  just tracked offchain, but actually controlled by smart contract
-  rules.
-
-  For example:
-
-  - A user cannot spend more than the Food category allocation unless
-    overspend is enabled.
-  - Each spend emits an event, so spending history is transparent and
-    indexable.
-  - Budgets have real start and end dates.
-  - Leftover money can be saved or withdrawn.
-  - The memory_ref field suggests you may connect this to AI or
-    Walrus/MemWal storage for offchain budgeting notes,
-    recommendations, or financial memory.
-
-  So the app could become something like:
-
-  AI-assisted onchain budget vault for SUI users
-
-  Main Features By Contract Function
-
-  create_budget
-
-  Creates a new budget vault. The user deposits SUI and splits it into
-  categories.
-
-  Useful for: starting a weekly/monthly/yearly spending plan.
-
-  spend
-
-  Pays someone from a specific category.
-
-  Useful for: recording and enforcing spending limits.
-
-  swap_categories
-
-  Moves unused budget from one category to another, with a 5% fee.
-
-  Useful for: adjusting your budget mid-cycle.
-
-  overspend
-
-  Allows spending beyond a category limit, with a 10% fee.
-
-  Useful for: emergencies, but discourages careless overspending.
-
-  close_budget
-
-  Ends the budget after its expiry date. The remaining money can be
-  saved or returned.
-
-  Useful for: finishing a budget cycle cleanly.
-
-  redistribute_budget
-
-  Reuses remaining funds for a new budget cycle with new category
-  allocations.
-
-  Useful for: rolling leftover funds into the next month.
-
-  withdraw_savings
-
-  Withdraws money from a SavingsVault.
-
-  Useful for: accessing saved leftover funds.
-
-  Business/Product Angle
-
-  This could be positioned as:
-
-  A self-custodial budgeting app on Sui where users create spending
-  envelopes, track usage, and build savings discipline.
-
-  The strongest use case is budgeting discipline. Instead of just
-  showing charts after money is spent, the contract actively enforces
-  spending categories before money leaves the vault.
-
-  One Important Note
-
-  The contract only manages SUI, not other coins yet. So right now it
-  is best suited for SUI-denominated budgeting. Later, it could be
-  expanded to support generic coin types like Coin<T>.
-
-
-
-
-
-   https://docs.memwal.ai/getting-started/what-is-memwal ,
-   https://docs.wal.app/docs/typescript-sdk/sdks
-
-
-
-
-  1. The "Planner" (Budgeting)
-  Instead of manually calculating how much goes into each category, let the AI handle the math.
-   * Best Practice: Give the AI a total amount and a specific goal.
-   * Prompt Example: "Create a 10 SUI monthly budget for a student."
-   * Why? The AI automatically knows to prioritize Food and Transport (1.5x weight) and ensures the Other category stays within the contract's
-     average-limit rule.
-
-  2. The "Executor" (Transactions)
-  When you need to make a payment or move money, don't hunt for the specific vault card. Just describe the action.
-   * Best Practice: Mention the amount, the category, and the recipient.
-   * Prompt Example: "Spend 2 SUI from Food to 0x7a9d... for tonight's dinner."
-   * Why? It skips 3–4 clicks and pre-fills the "Receipt Note," which is crucial for the next step (Memory).
-
-  3. The "Historian" (Memory Recall)
-  Once you've made a few transactions, use the search bar in the History drawer to find them—not by looking at dates, but by looking for
-  meanings.
-   * Best Practice: Search for objects or events, even if you don't remember the exact note.
-   * Prompt Example: Search for "grocery receipts" or "last month's school fees."
-   * Why? Because we use MemWal/Walrus, the search is "semantic." It knows that "groceries" and "food" are related.
-
-  4. The "Optimizer" (Mid-Cycle Adjustment)
-  If you realize you spent too much on "Entertainment/Utilities" and need more for "Transport," use the AI to swap.
-   * Prompt Example: "Swap 1.5 SUI from Entertainment/Utilities to Transport."
-   * Why? It identifies the correct category IDs for you instantly, reducing the risk of a "Category Not Found" error from the smart contract.
-
-  Summary Strategy:
-   1. Draft your month with one sentence.
-   2. Spend by describing what you bought.
-   3. Recall your history by asking questions about your past spending.
+Vault currently supports SUI budgeting on Sui Testnet. The current version focuses on student-friendly budgeting, receipt storage, category spending, budget swaps, and persistent financial memory.
