@@ -121,9 +121,6 @@ Vault fits the Walrus track because it gives the finance workflow persistent mem
 ## Tech Stack
 
 - Next.js
-- React
-- TypeScript
-- Ant Design
 - Sui dApp Kit
 - Sui Move contract
 - Walrus
