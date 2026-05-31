@@ -42,6 +42,7 @@ The budget vault is an onchain object that owns and manages SUI. The Move contra
 
 - Contract repo: https://github.com/bellobambo/vault-sui
 - Network: Sui Testnet
+- SuiVision package link: https://testnet.suivision.xyz/package/0x6e5fbdaf83d98b2e44c08470a563093184f130fd42f724892167905c43ae06c5
 - Package/program ID:
 
 ```text
