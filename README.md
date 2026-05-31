@@ -156,5 +156,41 @@ Yes. Looking at the ABI/functions, this project is a Sui-based
   expanded to support generic coin types like Coin<T>.
 
 
-   https://docs.memwal.ai/getting-started/what-is-memwal , 
+
+
+
+   https://docs.memwal.ai/getting-started/what-is-memwal ,
    https://docs.wal.app/docs/typescript-sdk/sdks
+
+
+
+
+  1. The "Planner" (Budgeting)
+  Instead of manually calculating how much goes into each category, let the AI handle the math.
+   * Best Practice: Give the AI a total amount and a specific goal.
+   * Prompt Example: "Create a 10 SUI monthly budget for a student."
+   * Why? The AI automatically knows to prioritize Food and Transport (1.5x weight) and ensures the Other category stays within the contract's
+     average-limit rule.
+
+  2. The "Executor" (Transactions)
+  When you need to make a payment or move money, don't hunt for the specific vault card. Just describe the action.
+   * Best Practice: Mention the amount, the category, and the recipient.
+   * Prompt Example: "Spend 2 SUI from Food to 0x7a9d... for tonight's dinner."
+   * Why? It skips 3–4 clicks and pre-fills the "Receipt Note," which is crucial for the next step (Memory).
+
+  3. The "Historian" (Memory Recall)
+  Once you've made a few transactions, use the search bar in the History drawer to find them—not by looking at dates, but by looking for
+  meanings.
+   * Best Practice: Search for objects or events, even if you don't remember the exact note.
+   * Prompt Example: Search for "grocery receipts" or "last month's school fees."
+   * Why? Because we use MemWal/Walrus, the search is "semantic." It knows that "groceries" and "food" are related.
+
+  4. The "Optimizer" (Mid-Cycle Adjustment)
+  If you realize you spent too much on "Entertainment" and need more for "Transport," use the AI to swap.
+   * Prompt Example: "Swap 1.5 SUI from Entertainment to Transport."
+   * Why? It identifies the correct category IDs for you instantly, reducing the risk of a "Category Not Found" error from the smart contract.
+
+  Summary Strategy:
+   1. Draft your month with one sentence.
+   2. Spend by describing what you bought.
+   3. Recall your history by asking questions about your past spending.

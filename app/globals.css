@@ -2,10 +2,10 @@
 
 :root {
   --background: #007979;
-  --foreground: #F5F5F5;
+  --foreground: #f5f5f5;
   --app-bg: #007979;
   --vault-primary: #007979;
-  --vault-accent: #F5F5F5;
+  --vault-accent: #f5f5f5;
 }
 
 @theme inline {
@@ -15,10 +15,17 @@
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
+html {
+  overflow: hidden;
+  height: 100vh;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-montserrat), sans-serif;
+  font-family: var(--font-sans), sans-serif;
+  overflow: hidden;
+  height: 100vh;
 }
 
 .ant-btn-primary {
@@ -221,7 +228,8 @@ body {
 .ai-search-input .ant-input,
 .ai-search-input .ant-input-affix-wrapper,
 .ai-search-input .ant-input-search-button,
-.ai-search-input .ant-input-group-addon {
+.ai-search-input .ant-input-group-addon,
+.ai-search-input .ant-input-affix-wrapper > input.ant-input {
   height: 40px !important;
   min-height: 40px !important;
   line-height: 40px !important;
@@ -233,6 +241,15 @@ body {
 
 .ai-search-input .ant-input-affix-wrapper {
   border-right: none !important;
+}
+
+.intention-textarea {
+  min-height: 120px;
+  font-size: 16px !important;
+  padding: 12px !important;
+  border-radius: 8px !important;
+  border-color: var(--vault-primary) !important;
+  color: var(--vault-primary) !important;
 }
 
 .allocation-group {

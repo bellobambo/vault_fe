@@ -8,7 +8,7 @@ import {
   useSuiClient,
   useSuiClientQuery,
 } from "@mysten/dapp-kit";
-import { CloudDownloadOutlined, SyncOutlined } from "@ant-design/icons";
+import { CloudDownloadOutlined, RobotOutlined, SendOutlined, SyncOutlined } from "@ant-design/icons";
 import type { SuiEvent } from "@mysten/sui/jsonRpc";
 import {
   Button,
@@ -68,8 +68,9 @@ type CreateBudgetValues = {
 };
 
 type AllocationDraft = {
-  categoryId?: number;
-  amount?: string;
+  categoryId: number;
+  name?: string;
+  amount: string;
 };
 
 type VaultCategoryOption = {
@@ -141,11 +142,13 @@ export function VaultApp() {
   const [documentForm] = Form.useForm();
   const [openDrawer, setOpenDrawer] = useState<DrawerKey | null>(null);
   const [activeAction, setActiveAction] = useState<ActionValues["action"]>("spend");
+  const [isAICommanderOpen, setIsAICommanderOpen] = useState(false);
   const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>(getMemoryRecordDrafts);
   const [recalledMemories, setRecalledMemories] = useState<RecalledMemory[]>([]);
   const [assistantText, setAssistantText] = useState("");
   const [isRemembering, setIsRemembering] = useState(false);
   const [isRecalling, setIsRecalling] = useState(false);
+  const [isExecutingAI, setIsExecutingAI] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [lastDigest, setLastDigest] = useState<string>();
   const [actionCategories, setActionCategories] = useState<VaultCategoryOption[]>([]);
@@ -168,7 +171,7 @@ export function VaultApp() {
       .slice(0, 4)
       .map((allocation) => parseFloat(allocation?.amount ?? "") || 0);
     const validAmounts = firstFourAmounts.filter((amount: number) => amount > 0);
-    
+
     // Always recalculate Other whenever allocations change
     if (allocations.length > 0 && validAmounts.length > 0) {
       const average = validAmounts.reduce((sum: number, a: number) => sum + a, 0) / validAmounts.length;
@@ -278,8 +281,13 @@ export function VaultApp() {
     [historyRows],
   );
 
+  const swapHistoryRows = useMemo(
+    () => historyRows.filter((item) => item.name === "CategorySwap"),
+    [historyRows],
+  );
+
   const otherHistoryRows = useMemo(
-    () => historyRows.filter((item) => item.name !== "BudgetSpend"),
+    () => historyRows.filter((item) => item.name !== "BudgetSpend" && item.name !== "CategorySwap"),
     [historyRows],
   );
 
@@ -329,6 +337,51 @@ export function VaultApp() {
           {item.fields.overspend ? "Overspend" : "Spend"}
         </span>
       ),
+    },
+    {
+      title: "Tx",
+      key: "tx",
+      width: 115,
+      render: (_value, item) => shortId(item.event.id.txDigest),
+    },
+  ];
+
+  const swapHistoryColumns: ColumnsType<HistoryEvent> = [
+    {
+      title: "Date",
+      key: "date",
+      width: 150,
+      render: (_value, item) => formatEventTime(item.event),
+    },
+    {
+      title: "Vault",
+      key: "vault",
+      width: 110,
+      render: (_value, item) => shortId(readStringField(item.fields.vault_id) ?? "-"),
+    },
+    {
+      title: "From",
+      key: "from",
+      width: 110,
+      render: (_value, item) => formatCategoryName(item.fields.from_category),
+    },
+    {
+      title: "To",
+      key: "to",
+      width: 110,
+      render: (_value, item) => formatCategoryName(item.fields.to_category),
+    },
+    {
+      title: "Amount",
+      key: "amount",
+      width: 110,
+      render: (_value, item) => formatMist(item.fields.amount),
+    },
+    {
+      title: "Fee",
+      key: "fee",
+      width: 100,
+      render: (_value, item) => formatMist(item.fields.fee),
     },
     {
       title: "Tx",
@@ -470,30 +523,33 @@ export function VaultApp() {
     );
   }
 
-  async function handleVaultAction(values: ActionValues) {
+  async function handleVaultAction(values: ActionValues, onComplete?: () => void) {
     if (!account) {
       toast.error("Connect your Sui wallet first.");
+      onComplete?.();
       return;
     }
 
     // Check for overspend on spend action (but not if already confirmed via modal)
     if (values.action === "spend" && values.categoryId !== undefined && !values._skipOverspendCheck) {
       const vault = vaultRows.find((v) => v.id === values.vaultId);
-      
+
       if (!vault) {
         toast.error("Vault not found. Please refresh and try again.");
+        onComplete?.();
         return;
       }
 
       const category = vault.categories.find((c) => c.id === values.categoryId);
-      
+
       if (!category) {
         toast.error(`Category ${values.categoryId} not found in vault. Please select a valid category.`);
+        onComplete?.();
         return;
       }
 
       const allocation = Number(category.allocation) / 1e9; // Convert from MIST to SUI
-      
+
       // Calculate spent in this category from history
       const spentInCategory = spendHistoryRows
         .filter(
@@ -516,6 +572,7 @@ export function VaultApp() {
           categoryName: category.name,
           remaining,
         });
+        onComplete?.();
         return;
       }
     }
@@ -541,6 +598,7 @@ export function VaultApp() {
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save memory.");
+      onComplete?.();
       return;
     }
 
@@ -548,26 +606,26 @@ export function VaultApp() {
     const tx =
       values.action === "swap"
         ? buildSwapCategoriesTransaction({
-            vaultId: values.vaultId,
-            fromCategoryId: Number(values.fromCategoryId),
-            toCategoryId: Number(values.toCategoryId),
-            amountMist,
-          })
+          vaultId: values.vaultId,
+          fromCategoryId: Number(values.fromCategoryId),
+          toCategoryId: Number(values.toCategoryId),
+          amountMist,
+        })
         : values.action === "overspend"
           ? buildOverspendTransaction({
-              vaultId: values.vaultId,
-              categoryId: Number(values.categoryId),
-              recipient: values.recipient ?? "",
-              amountMist,
-              note: memory.memoryRef,
-            })
+            vaultId: values.vaultId,
+            categoryId: Number(values.categoryId),
+            recipient: values.recipient ?? "",
+            amountMist,
+            note: memory.memoryRef,
+          })
           : buildSpendTransaction({
-              vaultId: values.vaultId,
-              categoryId: Number(values.categoryId),
-              recipient: values.recipient ?? "",
-              amountMist,
-              note: memory.memoryRef,
-            });
+            vaultId: values.vaultId,
+            categoryId: Number(values.categoryId),
+            recipient: values.recipient ?? "",
+            amountMist,
+            note: memory.memoryRef,
+          });
 
     signAndExecute(
       { transaction: tx, chain: "sui:testnet" },
@@ -576,8 +634,12 @@ export function VaultApp() {
           setLastDigest(result.digest);
           toast.success(`${values.action} transaction sent.`);
           ownedVaults.refetch();
+          onComplete?.();
         },
-        onError: (error) => toast.error(error.message),
+        onError: (error) => {
+          toast.error(error.message);
+          onComplete?.();
+        },
       },
     );
   }
@@ -680,7 +742,10 @@ export function VaultApp() {
     await handleMemoryRecall(text);
 
     const draft = createActionDraft(text, vaultRows);
+
     if (draft.kind === "budget") {
+      setIsAICommanderOpen(false);
+      setAssistantText("");
       createForm.setFieldsValue(draft.values);
       setOpenDrawer("createBudget");
       return;
@@ -690,7 +755,21 @@ export function VaultApp() {
     setActionCategories(vault?.categories ?? []);
     setActiveAction(draft.values.action);
     actionForm.setFieldsValue(draft.values);
-    setOpenDrawer("actions");
+
+    // Direct Execution: Instead of opening drawer, trigger the action handler directly
+    if (draft.values.vaultId && draft.values.amount) {
+      setIsExecutingAI(true);
+      handleVaultAction(draft.values as ActionValues, () => {
+        setIsExecutingAI(false);
+        setIsAICommanderOpen(false);
+        setAssistantText("");
+      });
+    } else {
+      // Fallback: if data is incomplete, open drawer for manual completion
+      setIsAICommanderOpen(false);
+      setAssistantText("");
+      setOpenDrawer("actions");
+    }
   }
 
   async function copyAddress() {
@@ -736,7 +815,14 @@ export function VaultApp() {
 
       <nav className="bg-[#007979] px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex w-full flex-wrap justify-end gap-3">
-          <Button onClick={() => setOpenDrawer("createBudget")}>Create Budget</Button>
+          <Button
+            onClick={() => {
+              createForm.resetFields();
+              setOpenDrawer("createBudget");
+            }}
+          >
+            Create Budget
+          </Button>
           <Button
             onClick={() => {
               setMemoryRecords(getMemoryRecordDrafts());
@@ -748,6 +834,33 @@ export function VaultApp() {
           <Button onClick={() => setOpenDrawer("history")}>History</Button>
         </div>
       </nav>
+
+      <Button
+        style={{
+          position: "fixed",
+          bottom: "24px",
+          right: "24px",
+          zIndex: 9999,
+          width: "64px",
+          height: "64px",
+          borderRadius: "50%",
+          backgroundColor: "var(--vault-accent)",
+          borderColor: "var(--vault-primary)",
+          border: "2px solid var(--vault-primary)",
+          color: "var(--vault-primary)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 10px 25px rgba(0, 0, 0, 0.3)",
+          padding: 0,
+          cursor: "pointer",
+          transition: "transform 0.2s ease"
+        }}
+        icon={<RobotOutlined style={{ fontSize: "32px" }} />}
+        onClick={() => setIsAICommanderOpen(true)}
+        onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.1)")}
+        onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+      />
 
       <main className="min-h-[calc(100vh-116px)] bg-[#007979] px-4 py-8 text-[var(--vault-accent)] sm:px-6">
         {!account ? (
@@ -761,110 +874,116 @@ export function VaultApp() {
             </Typography.Paragraph>
           </section>
         ) : (
-        <section className="mx-auto w-full max-w-6xl">
-          <div className="mb-8 text-left">
-            <Typography.Title className="vault-page-title !mb-0" level={2}>
-              My Vault
-            </Typography.Title>
-          </div>
-
-          {vaultRows.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {vaultRows.map((vault) => (
-                <Card
-                  key={vault.id}
-                  className="compact-card centered-form-card"
-                  title={
-                    <div className="flex items-center justify-between">
-                      <span>Budget Vault</span>
-                      <Tag className="theme-tag">
-                        {vault.active === "true" ? "Active" : vault.active}
-                      </Tag>
-                    </div>
-                  }
-                >
-                  <div className="space-y-4">
-                    <div>
-                      <Typography.Text type="secondary">Vault ID</Typography.Text>
-                      <Typography.Paragraph className="!my-1 break-all font-mono text-xs">
-                        {vault.id}
-                      </Typography.Paragraph>
-                    </div>
-                    <div className="flex justify-between gap-4">
-                      <div>
-                        <Typography.Text type="secondary">Duration</Typography.Text>
-                        <Typography.Paragraph className="!my-1 font-bold">
-                          {vault.duration}
-                        </Typography.Paragraph>
-                      </div>
-                      <div className="text-right">
-                        <Typography.Text type="secondary">Created</Typography.Text>
-                        <Typography.Paragraph className="!my-1 font-bold">
-                          {vault.createdAt}
-                        </Typography.Paragraph>
-                      </div>
-                    </div>
-                    <div className="flex justify-between gap-4">
-                      <div>
-                        <Typography.Text type="secondary">Balance</Typography.Text>
-                        <Typography.Paragraph className="!my-1 font-bold">
-                          {vault.balance}
-                        </Typography.Paragraph>
-                      </div>
-                      <div>
-                        <Typography.Text type="secondary">Spent</Typography.Text>
-                        <Typography.Paragraph className="!my-1 font-bold">
-                          {vault.spent}
-                        </Typography.Paragraph>
-                      </div>
-                    </div>
-                    <div className="vault-card-actions flex gap-2 border-t border-[var(--vault-primary)] pt-4">
-                      <Button
-                        className="vault-card-action-primary"
-                        size="small"
-                        onClick={() => {
-                          actionForm.setFieldValue("vaultId", vault.id);
-                          actionForm.setFieldValue("action", "spend");
-                          setActionCategories(vault.categories);
-                          setActiveAction("spend");
-                          setOpenDrawer("actions");
-                        }}
-                      >
-                        Spend
-                      </Button>
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          actionForm.setFieldValue("vaultId", vault.id);
-                          actionForm.setFieldValue("action", "swap");
-                          setActionCategories(vault.categories);
-                          setActiveAction("swap");
-                          setOpenDrawer("actions");
-                        }}
-                      >
-                        Swap
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              ))}
+          <section className="mx-auto w-full max-w-6xl">
+            <div className="mb-8 text-left">
+              <Typography.Title className="vault-page-title !mb-0" level={2}>
+                My Vault
+              </Typography.Title>
             </div>
-          ) : (
-            <Card className="compact-card centered-form-card text-center">
-              <Typography.Paragraph className="!text-[var(--vault-accent)]">
-                No vaults yet. Create your first budget vault to get started.
-              </Typography.Paragraph>
-            </Card>
-          )}
 
-          {lastDigest ? (
-            <div className="mt-6 text-center">
-              <Typography.Text className="text-xs">
-                Last digest: <span className="font-mono">{lastDigest}</span>
-              </Typography.Text>
-            </div>
-          ) : null}
-        </section>
+            {vaultRows.length > 0 ? (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {vaultRows.map((vault, index) => (
+                  <Card
+                    key={vault.id}
+                    className="compact-card centered-form-card"
+                    title={
+                      <div className="flex items-center justify-between">
+                        <span>Budget Vault #{index + 1}</span>
+                        <Tag className="theme-tag">
+                          {vault.active === "true" ? "Active" : vault.active}
+                        </Tag>
+                      </div>
+                    }
+                  >
+                    <div className="space-y-4">
+                      <div>
+                        <Typography.Text type="secondary">Vault ID</Typography.Text>
+                        <Typography.Paragraph
+                          className="!my-1 break-all font-mono text-xs cursor-pointer hover:text-blue-500 hover:underline transition-all"
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(vault.id);
+                            toast.success("Vault ID copied.");
+                          }}
+                        >
+                          {shortId(vault.id)}
+                        </Typography.Paragraph>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <div>
+                          <Typography.Text type="secondary">Duration</Typography.Text>
+                          <Typography.Paragraph className="!my-1 font-bold">
+                            {vault.duration}
+                          </Typography.Paragraph>
+                        </div>
+                        <div className="text-right">
+                          <Typography.Text type="secondary">Created</Typography.Text>
+                          <Typography.Paragraph className="!my-1 font-bold">
+                            {vault.createdAt}
+                          </Typography.Paragraph>
+                        </div>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <div>
+                          <Typography.Text type="secondary">Balance</Typography.Text>
+                          <Typography.Paragraph className="!my-1 font-bold">
+                            {vault.balance}
+                          </Typography.Paragraph>
+                        </div>
+                        <div>
+                          <Typography.Text type="secondary">Spent</Typography.Text>
+                          <Typography.Paragraph className="!my-1 font-bold">
+                            {vault.spent}
+                          </Typography.Paragraph>
+                        </div>
+                      </div>
+                      <div className="vault-card-actions flex gap-2 border-t border-[var(--vault-primary)] pt-4">
+                        <Button
+                          className="vault-card-action-primary"
+                          size="small"
+                          onClick={() => {
+                            actionForm.setFieldValue("vaultId", vault.id);
+                            actionForm.setFieldValue("action", "spend");
+                            setActionCategories(vault.categories);
+                            setActiveAction("spend");
+                            setOpenDrawer("actions");
+                          }}
+                        >
+                          Spend
+                        </Button>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            actionForm.setFieldValue("vaultId", vault.id);
+                            actionForm.setFieldValue("action", "swap");
+                            setActionCategories(vault.categories);
+                            setActiveAction("swap");
+                            setOpenDrawer("actions");
+                          }}
+                        >
+                          Swap
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <Card className="compact-card centered-form-card text-center">
+                <Typography.Paragraph className="!text-[var(--vault-accent)]">
+                  No vaults yet. Create your first budget vault to get started.
+                </Typography.Paragraph>
+              </Card>
+            )}
+
+            {lastDigest ? (
+              <div className="mt-6 text-center">
+                <Typography.Text className="text-xs">
+                  Last digest: <span className="font-mono">{lastDigest}</span>
+                </Typography.Text>
+              </div>
+            ) : null}
+          </section>
         )}
       </main>
 
@@ -874,32 +993,6 @@ export function VaultApp() {
         onClose={() => setOpenDrawer(null)}
         size="large"
       >
-        <div className="mb-6 p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/10">
-          <Typography.Text className="block mb-2 font-medium text-xs uppercase tracking-wider opacity-60">
-            Draft with AI
-          </Typography.Text>
-          <div className="relative">
-            <Input.TextArea
-              className="theme-control !h-auto"
-              placeholder="e.g. Create a monthly 10 SUI budget split across food, transport..."
-              autoSize={{ minRows: 3, maxRows: 6 }}
-              value={assistantText}
-              onChange={(e) => setAssistantText(e.target.value)}
-            />
-            <div className="mt-2 flex justify-end">
-              <Button
-                type="primary"
-                size="small"
-                loading={isRecalling}
-                onClick={handleAssistantDraft}
-                className="px-6"
-              >
-                Draft
-              </Button>
-            </div>
-          </div>
-        </div>
-
         <Form
           form={createForm}
           layout="vertical"
@@ -951,26 +1044,26 @@ export function VaultApp() {
                     name={["allocations", index, "amount"]}
                     rules={[
                       { required: true, message: "Please enter an amount" },
-                      ...(category.id === 4 
+                      ...(category.id === 4
                         ? [{
-                            validator: (_rule: unknown, value: string) => {
-                              const allocations =
-                                (createForm.getFieldValue("allocations") || []) as AllocationDraft[];
-                              const firstFourAmounts = allocations
-                                .slice(0, 4)
-                                .map((allocation) => parseFloat(allocation?.amount ?? "") || 0);
-                              const validAmounts = firstFourAmounts.filter((amount: number) => amount > 0);
-                              
-                              if (validAmounts.length > 0) {
-                                const average = validAmounts.reduce((sum: number, a: number) => sum + a, 0) / validAmounts.length;
-                                const otherValue = parseFloat(value) || 0;
-                                if (otherValue > average) {
-                                  return Promise.reject(`Other cannot exceed ${average.toFixed(2)} SUI (the average)`);
-                                }
+                          validator: (_rule: unknown, value: string) => {
+                            const allocations =
+                              (createForm.getFieldValue("allocations") || []) as AllocationDraft[];
+                            const firstFourAmounts = allocations
+                              .slice(0, 4)
+                              .map((allocation) => parseFloat(allocation?.amount ?? "") || 0);
+                            const validAmounts = firstFourAmounts.filter((amount: number) => amount > 0);
+
+                            if (validAmounts.length > 0) {
+                              const average = validAmounts.reduce((sum: number, a: number) => sum + a, 0) / validAmounts.length;
+                              const otherValue = parseFloat(value) || 0;
+                              if (otherValue > average) {
+                                return Promise.reject(`Other cannot exceed ${average.toFixed(2)} SUI (the average)`);
                               }
-                              return Promise.resolve();
                             }
-                          }]
+                            return Promise.resolve();
+                          }
+                        }]
                         : []
                       )
                     ]}
@@ -1016,32 +1109,6 @@ export function VaultApp() {
         }}
         size="large"
       >
-        <div className="mb-6 p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/10">
-          <Typography.Text className="block mb-2 font-medium text-xs uppercase tracking-wider opacity-60">
-            Draft with AI
-          </Typography.Text>
-          <div className="relative">
-            <Input.TextArea
-              className="theme-control !h-auto"
-              placeholder="e.g. Spend 2 SUI for food to 0x123..."
-              autoSize={{ minRows: 3, maxRows: 6 }}
-              value={assistantText}
-              onChange={(e) => setAssistantText(e.target.value)}
-            />
-            <div className="mt-2 flex justify-end">
-              <Button
-                type="primary"
-                size="small"
-                loading={isRecalling}
-                onClick={handleAssistantDraft}
-                className="px-6"
-              >
-                Draft
-              </Button>
-            </div>
-          </div>
-        </div>
-
         <Space className="mb-4" wrap>
           <Tag className="theme-tag">Swap fee {VAULT_FEES_BPS.categorySwap / 100}%</Tag>
           <Tag className="theme-tag">
@@ -1182,7 +1249,7 @@ export function VaultApp() {
         title="Vault History"
         onClose={() => setOpenDrawer(null)}
         size={1200}
-        // width={1400}
+      // width={1400}
       >
         <div className="mb-6 flex items-center justify-between gap-4">
           <Typography.Text>
@@ -1216,12 +1283,32 @@ export function VaultApp() {
           <Typography.Text className="block mb-2 font-medium text-xs uppercase tracking-wider opacity-60">
             Search financial memory
           </Typography.Text>
-          <Input.Search
-            placeholder="Search your past receipts, notes, and budgets (e.g. 'grocery trip', 'savings plans')..."
-            enterButton="Recall"
-            loading={isRecalling}
-            onSearch={(value) => handleMemoryRecall(value)}
-          />
+          <div className="relative p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/20 history-search-area">
+            <Input.TextArea
+              className="intention-textarea !bg-white"
+              placeholder="Search your past receipts, notes, and budgets (e.g. 'grocery trip', 'savings plans')..."
+              autoSize={{ minRows: 4, maxRows: 15 }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleMemoryRecall((e.target as HTMLTextAreaElement).value);
+                }
+              }}
+            />
+            <div className="mt-3 flex justify-end">
+              <Button
+                type="primary"
+                loading={isRecalling}
+                onClick={() => {
+                  const textarea = document.querySelector('.history-search-area textarea') as HTMLTextAreaElement;
+                  if (textarea) handleMemoryRecall(textarea.value);
+                }}
+                className="px-8 h-9 text-sm"
+              >
+                Recall
+              </Button>
+            </div>
+          </div>
         </div>
 
         {recalledMemories.length > 0 && (
@@ -1230,9 +1317,9 @@ export function VaultApp() {
               <Typography.Text className="font-medium text-xs uppercase tracking-wider opacity-60">
                 Recalled from MemWal
               </Typography.Text>
-              <Button 
-                type="link" 
-                size="small" 
+              <Button
+                type="link"
+                size="small"
                 onClick={() => setRecalledMemories([])}
                 className="text-xs"
               >
@@ -1295,6 +1382,19 @@ export function VaultApp() {
               />
             </Card>
 
+            <Card className="compact-card centered-form-card" title="Category Swap">
+              <Table
+                className="history-table"
+                columns={swapHistoryColumns}
+                dataSource={swapHistoryRows}
+                locale={{ emptyText: "No swap history found." }}
+                pagination={{ pageSize: 8 }}
+                rowKey={(item) => `${item.event.id.txDigest}-${item.event.id.eventSeq}`}
+                scroll={{ x: 760 }}
+                size="small"
+              />
+            </Card>
+
             {otherHistoryRows.length > 0 ? (
               <div className="grid gap-3">
                 {otherHistoryRows.map((item) => (
@@ -1331,6 +1431,53 @@ export function VaultApp() {
           </Card>
         )}
       </Drawer>
+
+      {/* AI Commander Modal */}
+      <Modal
+        title={<span className="text-lg font-bold">Intention</span>}
+        open={isAICommanderOpen}
+        onCancel={() => {
+          if (!isExecutingAI) {
+            setIsAICommanderOpen(false);
+            setAssistantText("");
+          }
+        }}
+        footer={null}
+        centered
+        width={700}
+        closable={!isExecutingAI}
+        styles={{
+          body: { minHeight: "300px" }
+        }}
+      >
+        <div className="py-2">
+          <div className="mb-2 p-4 bg-[#007979]/5 rounded-lg border border-[#007979]/20">
+            <Input.TextArea
+              className="intention-textarea !bg-white"
+              disabled={isExecutingAI}
+              placeholder="e.g. 'Spend 2 SUI on Food', 'Swap 1 SUI from Rent to Other', or 'Create a 10 SUI budget'..."
+              autoSize={{ minRows: 5, maxRows: 40 }}
+              value={assistantText}
+              onChange={(e) => setAssistantText(e.target.value)}
+            />
+            <div className="mt-4 flex justify-between items-start gap-4">
+              <div className="flex-grow">
+
+              </div>
+              <Button
+                type="primary"
+                icon={<SendOutlined />}
+                loading={isRecalling || isExecutingAI}
+                disabled={isExecutingAI}
+                onClick={handleAssistantDraft}
+                className="px-8 h-9 text-sm shrink-0"
+              >
+                Send
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Modal>
 
       {/* Overspend Modal */}
       {overspendModal?.visible && (
@@ -1489,34 +1636,96 @@ function extractCycle(text: string): keyof typeof BUDGET_CYCLES {
 }
 
 function buildAllocationDrafts(text: string, fallbackAmount?: string) {
-  const explicitAllocations = DEFAULT_CATEGORIES.map((category) => {
+  const categoriesFound = DEFAULT_CATEGORIES.filter((category) =>
+    new RegExp(`\\b${category.name}\\b`, "i").test(text)
+  );
+
+  // If no categories found, fallback to all defaults if amount provided, else empty
+  const activeCategories = categoriesFound.length > 0 ? categoriesFound : (fallbackAmount ? DEFAULT_CATEGORIES : []);
+
+  const allocations = activeCategories.map((category) => {
     const match = new RegExp(`${category.name}\\D+(\\d+(?:\\.\\d{1,9})?)`, "i").exec(text);
     return {
       categoryId: category.id,
       amount: match?.[1] ?? "",
     };
   });
-  const hasExplicitAllocations = explicitAllocations.some((item) => item.amount);
 
-  if (hasExplicitAllocations || !fallbackAmount) {
-    return explicitAllocations;
+  const hasExplicitAmounts = allocations.some((item) => item.amount);
+
+  if (!hasExplicitAmounts && fallbackAmount && activeCategories.length > 0) {
+    const totalAmount = Number(fallbackAmount);
+    if (Number.isFinite(totalAmount)) {
+      // Define weights: Food (0) and Transport (1) get 1.5x priority
+      const getWeight = (id: number) => (id === 0 || id === 1 ? 1.5 : 1.0);
+      let totalWeight = 0;
+      for (const cat of activeCategories) {
+        totalWeight += getWeight(cat.id);
+      }
+
+      return activeCategories.map((category) => {
+        const weight = getWeight(category.id);
+        const amount = totalWeight > 0 ? (totalAmount * (weight / totalWeight)).toFixed(2) : "0.00";
+        return {
+          categoryId: category.id,
+          amount,
+        };
+      });
+    }
   }
 
-  const splitAmount = Number(fallbackAmount) / DEFAULT_CATEGORIES.length;
-  const amount = Number.isFinite(splitAmount) ? splitAmount.toFixed(2) : "";
-  return DEFAULT_CATEGORIES.map((category) => ({
-    categoryId: category.id,
-    amount,
-  }));
+  // Filter out any that remained empty if some were explicitly filled
+  const filtered = hasExplicitAmounts ? allocations.filter(a => a.amount !== "") : allocations;
+
+  // Always return 5 categories for the manual form layout
+  return DEFAULT_CATEGORIES.map(cat => {
+    const draft = filtered.find(f => f.categoryId === cat.id);
+    return {
+      categoryId: cat.id,
+      amount: draft?.amount ?? ""
+    };
+  });
 }
 
 function findVaultForText(text: string, vaultRows: Array<{ id: string; categories: VaultCategoryOption[] }>) {
   const lower = text.toLowerCase();
-  return vaultRows.find((vault) => lower.includes(vault.id.toLowerCase())) ?? vaultRows[0];
+
+  // 1. Identification by Index (e.g., "vault 1", "budget 2")
+  const indexMatch = /(?:vault|budget|number)\s*(\d+)/i.exec(text);
+  if (indexMatch) {
+    const index = parseInt(indexMatch[1]) - 1; // Convert 1-based to 0-based
+    if (vaultRows[index]) return vaultRows[index];
+  }
+
+  // 2. Identification by Keywords ("first", "last", "latest", "recent")
+  if (lower.includes("first")) return vaultRows[0];
+  if (lower.includes("last") || lower.includes("latest") || lower.includes("recent")) {
+    return vaultRows[vaultRows.length - 1];
+  }
+
+  // 3. Identification by ID Fragment (0x...)
+  const idMatch = vaultRows.find((vault) => lower.includes(vault.id.toLowerCase()));
+  if (idMatch) return idMatch;
+
+  // 4. Default: Return newest vault
+  return vaultRows[vaultRows.length - 1] || vaultRows[0];
 }
 
 function extractSuiAmount(text: string) {
-  return /(\d+(?:\.\d{1,9})?)\s*sui/i.exec(text)?.[1] ?? "";
+  // 1. Try "1.5 sui" format
+  const suiMatch = /(\d+(?:\.\d{1,9})?)\s*sui/i.exec(text);
+  if (suiMatch) return suiMatch[1];
+
+  // 2. Try "spend/swap/budget 1.5" format
+  const actionMatch = /(?:spend|swap|budget|amount|of)\s+(\d+(?:\.\d{1,9})?)/i.exec(text);
+  if (actionMatch) return actionMatch[1];
+
+  // 3. Fallback: find the first decimal or number that isn't part of an 0x address
+  // We strip addresses first to avoid confusion
+  const textWithoutAddresses = text.replace(/0x[a-fA-F0-9]{16,64}/g, "");
+  const fallbackMatch = /(\d+(?:\.\d{1,9})?)/.exec(textWithoutAddresses);
+
+  return fallbackMatch ? fallbackMatch[1] : "";
 }
 
 function extractAddresses(text: string) {
