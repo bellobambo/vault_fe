@@ -10,10 +10,15 @@
     "codegen": "sui-ts-codegen generate"
   },
   "dependencies": {
+    "@mysten-incubation/memwal": "^0.0.6",
+    "@mysten/dapp-kit": "^1.0.6",
     "@mysten/sui": "^2.17.0",
+    "@tanstack/react-query": "^5.100.14",
+    "antd": "^6.4.3",
     "next": "16.2.6",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "react-hot-toast": "^2.6.0"
   },
   "devDependencies": {
     "@mysten/codegen": "^0.10.6",
