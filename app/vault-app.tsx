@@ -220,6 +220,7 @@ export function VaultApp() {
   const [lastRestoreSummary, setLastRestoreSummary] = useState<string>();
   const [lastDigest, setLastDigest] = useState<string>();
   const [actionCategories, setActionCategories] = useState<VaultCategoryOption[]>([]);
+  const hasManuallyEditedOtherAllocationRef = useRef(false);
   const [overspendModal, setOverspendModal] = useState<{
     visible: boolean;
     vaultId: string;
@@ -274,9 +275,14 @@ export function VaultApp() {
     changedFields: Partial<CreateBudgetValues>,
     allFields: Partial<CreateBudgetValues>,
   ) {
+    if (hasManuallyEditedOtherAllocationRef.current) {
+      return;
+    }
+
     const changedAllocation = changedFields.allocations?.find((allocation) => allocation);
 
     if (changedAllocation?.categoryId === 4 || changedFields.allocations?.[4]?.amount !== undefined) {
+      hasManuallyEditedOtherAllocationRef.current = true;
       return;
     }
 
@@ -1067,6 +1073,7 @@ export function VaultApp() {
     if (draft.kind === "budget") {
       setIsAICommanderOpen(false);
       setAssistantText("");
+      hasManuallyEditedOtherAllocationRef.current = false;
       createForm.setFieldsValue(draft.values);
       setOpenDrawer("createBudget");
       return;
@@ -1156,6 +1163,7 @@ export function VaultApp() {
             <>
               <Button
                 onClick={() => {
+                  hasManuallyEditedOtherAllocationRef.current = false;
                   createForm.resetFields();
                   setOpenDrawer("createBudget");
                 }}
@@ -1464,7 +1472,16 @@ export function VaultApp() {
                       )
                     ]}
                   >
-                    <Input placeholder="0.00" suffix="SUI" />
+                    <Input
+                      onChange={category.id === 4 ? () => {
+                        hasManuallyEditedOtherAllocationRef.current = true;
+                      } : undefined}
+                      onFocus={category.id === 4 ? () => {
+                        hasManuallyEditedOtherAllocationRef.current = true;
+                      } : undefined}
+                      placeholder="0.00"
+                      suffix="SUI"
+                    />
                   </Form.Item>
                   {category.id === 4 ? (
                     <Typography.Text className="allocation-note">
