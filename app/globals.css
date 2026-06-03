@@ -279,7 +279,15 @@ body {
 
 .history-table .ant-table-cell {
   padding: 8px 10px !important;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-table {
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .history-refresh-button {

@@ -471,13 +471,13 @@ export function VaultApp() {
     {
       title: "Date",
       key: "date",
-      width: 150,
+      width: 120,
       render: (_value, item) => formatEventTime(item.event),
     },
     {
       title: "Vault",
       key: "vault",
-      width: 110,
+      width: 100,
       render: (_value, item) => shortId(readStringField(item.fields.vault_id) ?? "-"),
     },
     {
@@ -489,13 +489,13 @@ export function VaultApp() {
     {
       title: "Amount",
       key: "amount",
-      width: 110,
+      width: 95,
       render: (_value, item) => formatMist(item.fields.amount),
     },
     {
       title: "Fee",
       key: "fee",
-      width: 100,
+      width: 85,
       render: (_value, item) => formatMist(item.fields.fee),
     },
     {
@@ -507,7 +507,7 @@ export function VaultApp() {
     {
       title: "Type",
       key: "type",
-      width: 100,
+      width: 90,
       render: (_value, item) => (
         <span style={{ color: item.fields.overspend ? "#ff4d4f" : "inherit" }}>
           {item.fields.overspend ? "Overspend" : "Spend"}
@@ -517,7 +517,7 @@ export function VaultApp() {
     {
       title: "Tx",
       key: "tx",
-      width: 115,
+      width: 100,
       render: (_value, item) => shortId(item.event.id.txDigest),
     },
   ];
@@ -526,13 +526,13 @@ export function VaultApp() {
     {
       title: "Date",
       key: "date",
-      width: 150,
+      width: 120,
       render: (_value, item) => formatEventTime(item.event),
     },
     {
       title: "Vault",
       key: "vault",
-      width: 110,
+      width: 100,
       render: (_value, item) => shortId(readStringField(item.fields.vault_id) ?? "-"),
     },
     {
@@ -550,19 +550,19 @@ export function VaultApp() {
     {
       title: "Amount",
       key: "amount",
-      width: 110,
+      width: 95,
       render: (_value, item) => formatMist(item.fields.amount),
     },
     {
       title: "Fee",
       key: "fee",
-      width: 100,
+      width: 85,
       render: (_value, item) => formatMist(item.fields.fee),
     },
     {
       title: "Tx",
       key: "tx",
-      width: 115,
+      width: 100,
       render: (_value, item) => shortId(item.event.id.txDigest),
     },
   ];
@@ -2014,7 +2014,6 @@ export function VaultApp() {
                 locale={{ emptyText: "No spend history found." }}
                 pagination={{ pageSize: 8 }}
                 rowKey={(item) => `${item.event.id.txDigest}-${item.event.id.eventSeq}`}
-                scroll={{ x: 760 }}
                 size="small"
               />
             </Card>
@@ -2027,7 +2026,6 @@ export function VaultApp() {
                 locale={{ emptyText: "No swap history found." }}
                 pagination={{ pageSize: 8 }}
                 rowKey={(item) => `${item.event.id.txDigest}-${item.event.id.eventSeq}`}
-                scroll={{ x: 760 }}
                 size="small"
               />
             </Card>
