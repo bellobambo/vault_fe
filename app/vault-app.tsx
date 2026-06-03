@@ -2332,10 +2332,11 @@ function createActionDraft(text: string, vaultRows: Array<{ id: string; categori
 }
 
 function extractCycle(text: string): keyof typeof BUDGET_CYCLES {
-  if (text.includes("daily")) return "daily";
-  if (text.includes("weekly")) return "weekly";
-  if (text.includes("yearly") || text.includes("annual")) return "yearly";
-  if (text.includes("half") || text.includes("six month")) return "halfYear";
+  if (/\b(daily|day|1 day|one day)\b/.test(text)) return "daily";
+  if (/\b(weekly|week|1 week|one week|7 days|seven days)\b/.test(text)) return "weekly";
+  if (/\b(half\s*year|half-year|six months?|6 months?)\b/.test(text)) return "halfYear";
+  if (/\b(yearly|annual|annually|year|1 year|one year|12 months?)\b/.test(text)) return "yearly";
+  if (/\b(monthly|month|1 month|one month|30 days|thirty days)\b/.test(text)) return "monthly";
   return "monthly";
 }
 
