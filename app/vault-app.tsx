@@ -1170,32 +1170,34 @@ export function VaultApp() {
         </div>
       </nav>
 
-      <Button
-        style={{
-          position: "fixed",
-          bottom: "24px",
-          right: "24px",
-          zIndex: 9999,
-          width: "64px",
-          height: "64px",
-          borderRadius: "50%",
-          backgroundColor: "var(--vault-accent)",
-          borderColor: "var(--vault-primary)",
-          border: "2px solid var(--vault-primary)",
-          color: "var(--vault-primary)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          boxShadow: "0 10px 25px rgba(0, 0, 0, 0.3)",
-          padding: 0,
-          cursor: "pointer",
-          transition: "transform 0.2s ease"
-        }}
-        icon={<RobotOutlined style={{ fontSize: "32px" }} />}
-        onClick={() => setIsAICommanderOpen(true)}
-        onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.1)")}
-        onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
-      />
+      {account ? (
+        <Button
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            right: "24px",
+            zIndex: 9999,
+            width: "64px",
+            height: "64px",
+            borderRadius: "50%",
+            backgroundColor: "var(--vault-accent)",
+            borderColor: "var(--vault-primary)",
+            border: "2px solid var(--vault-primary)",
+            color: "var(--vault-primary)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 10px 25px rgba(0, 0, 0, 0.3)",
+            padding: 0,
+            cursor: "pointer",
+            transition: "transform 0.2s ease"
+          }}
+          icon={<RobotOutlined style={{ fontSize: "32px" }} />}
+          onClick={() => setIsAICommanderOpen(true)}
+          onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.1)")}
+          onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+        />
+      ) : null}
 
       <main className="vault-main min-h-[calc(100vh-116px)] bg-[#007979] px-4 py-8 text-[var(--vault-accent)] sm:px-6">
         {!account ? (
@@ -1310,11 +1312,11 @@ export function VaultApp() {
                 ))}
               </div>
             ) : (
-              <Card className="compact-card centered-form-card text-center">
-                <Typography.Paragraph className="!text-[var(--vault-accent)]">
-                  No vaults yet. Create one for everyday student expenses like meals, transport, and fees.
+              <div className="text-center">
+                <Typography.Paragraph className="!mb-0 !text-[var(--vault-accent)]">
+                  No vaults yet. Create one for everyday expenses like meals, transport, and fees.
                 </Typography.Paragraph>
-              </Card>
+              </div>
             )}
 
             {lastDigest ? (
