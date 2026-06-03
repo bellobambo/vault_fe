@@ -35,6 +35,20 @@ export type RecalledMemory = {
 
 const STORAGE_KEY = "vault:memory-records";
 
+function normalizeOwner(owner?: string) {
+  return owner?.trim().toLowerCase();
+}
+
+function recordBelongsToOwner(record: MemoryRecord, owner?: string) {
+  const normalizedOwner = normalizeOwner(owner);
+
+  if (!normalizedOwner) {
+    return false;
+  }
+
+  return normalizeOwner(record.owner) === normalizedOwner;
+}
+
 export function createMemoryRecord(input: MemoryRecordInput): MemoryRecord {
   const id =
     globalThis.crypto?.randomUUID?.() ??
@@ -59,7 +73,7 @@ export function saveMemoryRecordDraft(record: MemoryRecord) {
     return;
   }
 
-  const records = getMemoryRecordDrafts();
+  const records = getAllMemoryRecordDrafts();
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify([record, ...records]));
 }
 
@@ -82,7 +96,7 @@ export function updateMemoryRecordDraft(
     return;
   }
 
-  const records = getMemoryRecordDrafts();
+  const records = getAllMemoryRecordDrafts();
   window.localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify(
@@ -104,7 +118,7 @@ export function replaceMemoryRecordDraft(record: MemoryRecord) {
     return;
   }
 
-  const records = getMemoryRecordDrafts();
+  const records = getAllMemoryRecordDrafts();
   window.localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify(
@@ -113,7 +127,7 @@ export function replaceMemoryRecordDraft(record: MemoryRecord) {
   );
 }
 
-export function getMemoryRecordDrafts(): MemoryRecord[] {
+function getAllMemoryRecordDrafts(): MemoryRecord[] {
   if (typeof window === "undefined") {
     return [];
   }
@@ -128,6 +142,79 @@ export function getMemoryRecordDrafts(): MemoryRecord[] {
   } catch {
     return [];
   }
+}
+
+export function getMemoryRecordDrafts(owner?: string): MemoryRecord[] {
+  return getAllMemoryRecordDrafts().filter((record) => recordBelongsToOwner(record, owner));
+}
+
+export function getFallbackMemoryRecordDrafts(owner?: string): MemoryRecord[] {
+  return getMemoryRecordDrafts(owner).filter(
+    (record) => record.storage.memwal !== "saved" || record.storage.walrus !== "saved",
+  );
+}
+
+export function parseSerializedMemoryRecord(
+  text: string,
+  options: { owner?: string; walrusBlobId?: string } = {},
+): MemoryRecord | null {
+  const fields = new Map<string, string>();
+
+  for (const line of text.split("\n")) {
+    const [label, ...rest] = line.split(":");
+    const value = rest.join(":").trim();
+
+    if (value) {
+      fields.set(label.trim().toLowerCase(), value);
+    }
+  }
+
+  const title = fields.get("vault memory");
+  const kind = fields.get("kind");
+  const owner = fields.get("owner") ?? options.owner;
+  const memoryRef = fields.get("reference");
+  const createdAt = fields.get("created");
+
+  if (!title || !isMemoryRecordKind(kind) || !owner || !createdAt) {
+    return null;
+  }
+
+  const requestedOwner = normalizeOwner(options.owner);
+
+  if (requestedOwner && normalizeOwner(owner) !== requestedOwner) {
+    return null;
+  }
+
+  const attachmentWalrusEndEpoch = Number(fields.get("attachment walrus end epoch"));
+
+  return {
+    id: memoryRef?.split("/").pop() || `${owner}-${createdAt}-${title}`,
+    owner,
+    kind,
+    title,
+    body: fields.get("details"),
+    attachmentName: fields.get("attachment"),
+    attachmentWalrusBlobId: fields.get("attachment walrus blob"),
+    attachmentWalrusObjectId: fields.get("attachment walrus object"),
+    attachmentWalrusEndEpoch: Number.isFinite(attachmentWalrusEndEpoch)
+      ? attachmentWalrusEndEpoch
+      : undefined,
+    walrusBlobId: fields.get("memwal walrus blob") ?? options.walrusBlobId,
+    txDigest: fields.get("sui transaction"),
+    tags: fields.get("tags")?.split(",").map((tag) => tag.trim()).filter(Boolean),
+    createdAt,
+    memoryRef: memoryRef ?? `memwal://vault/${owner}/${kind}/${createdAt}`,
+    storage: {
+      memwal: "saved",
+      walrus: fields.get("attachment walrus blob") || fields.get("memwal walrus blob") || options.walrusBlobId
+        ? "saved"
+        : "pending",
+    },
+  };
+}
+
+function isMemoryRecordKind(value?: string): value is MemoryRecordKind {
+  return value === "budget" || value === "receipt" || value === "document" || value === "history";
 }
 
 export function serializeMemoryRecord(record: MemoryRecord) {

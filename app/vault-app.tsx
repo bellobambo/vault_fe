@@ -58,6 +58,7 @@ import {
 } from "@/src/lib/sui/vault";
 import {
   createMemoryRecord,
+  getFallbackMemoryRecordDrafts,
   getMemoryRecordDrafts,
   saveMemoryRecordDraft,
   serializeMemoryRecord,
@@ -143,6 +144,14 @@ type RecallApiResponse = {
   };
 };
 
+type MemoryRecordsApiResponse = {
+  namespace: string;
+  result: {
+    records: MemoryRecord[];
+    total: number;
+  };
+};
+
 type WalrusStoreApiResponse = {
   result: {
     blobId: string;
@@ -200,7 +209,7 @@ export function VaultApp() {
   const [openDrawer, setOpenDrawer] = useState<DrawerKey | null>(null);
   const [activeAction, setActiveAction] = useState<ActionValues["action"]>("spend");
   const [isAICommanderOpen, setIsAICommanderOpen] = useState(false);
-  const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>(getMemoryRecordDrafts);
+  const [, setMemoryRecordsVersion] = useState(0);
   const [recalledMemories, setRecalledMemories] = useState<RecalledMemory[]>([]);
   const [financialMemoryAnswer, setFinancialMemoryAnswer] = useState<FinancialMemoryAnswer | null>(null);
   const [memoryRecallEmptyMessage, setMemoryRecallEmptyMessage] = useState<string | null>(null);
@@ -213,6 +222,7 @@ export function VaultApp() {
   const [suiUsdUpdatedAt, setSuiUsdUpdatedAt] = useState<string>();
   const [assistantText, setAssistantText] = useState("");
   const [isRemembering, setIsRemembering] = useState(false);
+  const [isLoadingMemoryRecords, setIsLoadingMemoryRecords] = useState(false);
   const [isRecalling, setIsRecalling] = useState(false);
   const [isExecutingAI, setIsExecutingAI] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
@@ -220,6 +230,8 @@ export function VaultApp() {
   const [lastRestoreSummary, setLastRestoreSummary] = useState<string>();
   const [lastDigest, setLastDigest] = useState<string>();
   const [actionCategories, setActionCategories] = useState<VaultCategoryOption[]>([]);
+  const [networkMemoryRecords, setNetworkMemoryRecords] = useState<MemoryRecord[]>([]);
+  const [networkMemoryRecordsOwner, setNetworkMemoryRecordsOwner] = useState<string>();
   const hasManuallyEditedOtherAllocationRef = useRef(false);
   const [overspendModal, setOverspendModal] = useState<{
     visible: boolean;
@@ -269,6 +281,20 @@ export function VaultApp() {
       window.clearInterval(intervalId);
     };
   }, []);
+
+  const hasNetworkMemoryRecords = Boolean(
+    account?.address && networkMemoryRecordsOwner?.toLowerCase() === account.address.toLowerCase(),
+  );
+  const localMemoryRecords = hasNetworkMemoryRecords
+    ? getFallbackMemoryRecordDrafts(account?.address)
+    : getMemoryRecordDrafts(account?.address);
+  const memoryRecords = hasNetworkMemoryRecords
+    ? mergeMemoryRecords(networkMemoryRecords, localMemoryRecords)
+    : localMemoryRecords;
+
+  function refreshMemoryRecords() {
+    setMemoryRecordsVersion((version) => version + 1);
+  }
 
   // Handle form value changes to auto-calculate Other category in real-time
   function handleCreateFormValuesChange(
@@ -610,7 +636,7 @@ export function VaultApp() {
 
   async function persistMemoryRecord(record: MemoryRecord, attachmentFile?: File) {
     saveMemoryRecordDraft(record);
-    setMemoryRecords(getMemoryRecordDrafts());
+    refreshMemoryRecords();
 
     let recordForMemWal = record;
 
@@ -635,7 +661,7 @@ export function VaultApp() {
           attachmentWalrusEndEpoch: recordForMemWal.attachmentWalrusEndEpoch,
           storage: recordForMemWal.storage,
         });
-        setMemoryRecords(getMemoryRecordDrafts());
+        refreshMemoryRecords();
       }
 
       const response = await fetch("/api/memwal/remember", {
@@ -673,7 +699,7 @@ export function VaultApp() {
         txDigest: savedRecord.txDigest,
         storage: savedRecord.storage,
       });
-      setMemoryRecords(getMemoryRecordDrafts());
+      refreshMemoryRecords();
       return savedRecord;
     } catch (error) {
       updateMemoryRecordDraft(recordForMemWal.id, {
@@ -682,7 +708,7 @@ export function VaultApp() {
           walrus: recordForMemWal.storage.walrus,
         },
       });
-      setMemoryRecords(getMemoryRecordDrafts());
+      refreshMemoryRecords();
       throw error;
     } finally {
       setIsRemembering(false);
@@ -709,7 +735,7 @@ export function VaultApp() {
         walrus: "pending",
       },
     });
-    setMemoryRecords(getMemoryRecordDrafts());
+    refreshMemoryRecords();
   }
 
   async function handleCreateBudget(values: CreateBudgetValues) {
@@ -755,7 +781,7 @@ export function VaultApp() {
       startMs: now,
       endMs: now + cycleDurationsMs[values.cycle],
       categories,
-      allowOverspend: values.allowOverspend,
+      allowOverspend: values.allowOverspend ?? true,
       memoryRef: memory.memoryRef,
     });
 
@@ -764,6 +790,9 @@ export function VaultApp() {
       {
         onSuccess: (result) => {
           setLastDigest(result.digest);
+          setOpenDrawer(null);
+          createForm.resetFields();
+          hasManuallyEditedOtherAllocationRef.current = false;
           toast.success("Budget transaction sent.");
           void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
             toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
@@ -878,6 +907,10 @@ export function VaultApp() {
       {
         onSuccess: (result) => {
           setLastDigest(result.digest);
+          setOpenDrawer(null);
+          actionForm.resetFields();
+          setActionCategories([]);
+          setActiveAction("spend");
           toast.success(`${values.action} transaction sent.`);
           void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
             toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
@@ -1016,10 +1049,42 @@ export function VaultApp() {
 
       setLastRestoreSummary(summary);
       toast.success(summary);
+      await syncMemoryRecordsFromWalrus();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to restore memory index.");
     } finally {
       setIsRestoring(false);
+    }
+  }
+
+  async function syncMemoryRecordsFromWalrus() {
+    if (!account?.address) {
+      return;
+    }
+
+    try {
+      setIsLoadingMemoryRecords(true);
+      const response = await fetch("/api/memwal/records", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: account.address, limit: 50 }),
+      });
+      const payload = (await response.json()) as MemoryRecordsApiResponse | { error?: string };
+
+      if (!response.ok) {
+        throw new Error("error" in payload && payload.error ? payload.error : "Unable to load records from Walrus.");
+      }
+
+      const records = (payload as MemoryRecordsApiResponse).result.records;
+      setNetworkMemoryRecords(records);
+      setNetworkMemoryRecordsOwner(account.address);
+      refreshMemoryRecords();
+    } catch (error) {
+      setNetworkMemoryRecords([]);
+      setNetworkMemoryRecordsOwner(undefined);
+      toast.error(error instanceof Error ? error.message : "Using local fallback records.");
+    } finally {
+      setIsLoadingMemoryRecords(false);
     }
   }
 
@@ -1172,8 +1237,9 @@ export function VaultApp() {
               </Button>
               <Button
                 onClick={() => {
-                  setMemoryRecords(getMemoryRecordDrafts());
+                  refreshMemoryRecords();
                   setOpenDrawer("storage");
+                  void syncMemoryRecordsFromWalrus();
                 }}
               >
                 Records
@@ -1652,6 +1718,7 @@ export function VaultApp() {
               columns={memoryRecordColumns}
               dataSource={memoryRecords.filter((record) => record.title !== "Autonomous vault checkpoint")}
               locale={{ emptyText: "No saved receipts or documents yet." }}
+              loading={isLoadingMemoryRecords}
               onRow={(record) => ({
                 onClick: () => handleMemoryRecordOpen(record),
               })}
@@ -2330,11 +2397,27 @@ async function createOpenAiActionDraft(
       return null;
     }
 
-    return payload.draft ?? null;
+    return normalizeAssistantDraft(payload.draft ?? null, text);
   } catch (error) {
     console.warn(error instanceof Error ? error.message : "OpenAI intention drafting failed.");
     return null;
   }
+}
+
+function normalizeAssistantDraft(draft: AssistantDraft | null, text: string): AssistantDraft | null {
+  if (draft?.kind !== "budget") {
+    return draft;
+  }
+
+  const amount = extractSuiAmount(text);
+
+  return {
+    ...draft,
+    values: {
+      ...draft.values,
+      allocations: normalizeBudgetAllocations(draft.values.allocations, amount),
+    },
+  };
 }
 
 function createActionDraft(text: string, vaultRows: Array<{ id: string; categories: VaultCategoryOption[] }>): AssistantDraft {
@@ -2350,7 +2433,7 @@ function createActionDraft(text: string, vaultRows: Array<{ id: string; categori
         allowOverspend: true,
         memoryTitle: "AI drafted budget",
         memoryBody: text,
-        allocations: buildAllocationDrafts(text, amount),
+        allocations: normalizeBudgetAllocations(buildAllocationDrafts(text, amount), amount),
       },
     };
   }
@@ -2450,6 +2533,88 @@ function buildAllocationDrafts(text: string, fallbackAmount?: string) {
       amount: draft?.amount ?? ""
     };
   });
+}
+
+function normalizeBudgetAllocations(
+  allocations: CreateBudgetValues["allocations"] | undefined,
+  targetAmount?: string,
+) {
+  const normalized = DEFAULT_CATEGORIES.map((category) => {
+    const allocation = allocations?.find((item) => item.categoryId === category.id);
+    return {
+      categoryId: category.id,
+      amount: allocation?.amount ?? "",
+    };
+  });
+  const target = Number(targetAmount);
+
+  if (!Number.isFinite(target) || target <= 0) {
+    return normalized;
+  }
+
+  const currentTotal = normalized.reduce((sum, allocation) => sum + (Number(allocation.amount) || 0), 0);
+
+  if (currentTotal <= 0) {
+    return splitBudgetAmount(target);
+  }
+
+  const scaled = normalized.map((allocation) => ({
+    categoryId: allocation.categoryId,
+    amount: roundCurrency((Number(allocation.amount) || 0) * (target / currentTotal)).toFixed(2),
+  }));
+  let scaledTotal = sumAllocationAmounts(scaled);
+  let remainder = roundCurrency(target - scaledTotal);
+
+  if (remainder !== 0) {
+    const other = scaled[4];
+    const mainAverage = sumAllocationAmounts(scaled.slice(0, 4)) / 4;
+    const otherAfterRemainder = roundCurrency((Number(other.amount) || 0) + remainder);
+
+    if (otherAfterRemainder >= 0 && otherAfterRemainder <= mainAverage) {
+      other.amount = otherAfterRemainder.toFixed(2);
+    } else {
+      const mainIndex = scaled
+        .slice(0, 4)
+        .reduce((bestIndex, allocation, index, items) => (
+          Number(allocation.amount) > Number(items[bestIndex].amount) ? index : bestIndex
+        ), 0);
+      const adjusted = Math.max(0, roundCurrency((Number(scaled[mainIndex].amount) || 0) + remainder));
+      scaled[mainIndex].amount = adjusted.toFixed(2);
+    }
+  }
+
+  scaledTotal = sumAllocationAmounts(scaled);
+  remainder = roundCurrency(target - scaledTotal);
+
+  if (remainder !== 0) {
+    scaled[0].amount = Math.max(0, roundCurrency((Number(scaled[0].amount) || 0) + remainder)).toFixed(2);
+  }
+
+  return scaled;
+}
+
+function splitBudgetAmount(totalAmount: number) {
+  const weights = DEFAULT_CATEGORIES.map((category) => (category.id === 0 || category.id === 1 ? 1.5 : 1));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const allocations = DEFAULT_CATEGORIES.map((category, index) => ({
+    categoryId: category.id,
+    amount: roundCurrency(totalAmount * (weights[index] / totalWeight)).toFixed(2),
+  }));
+  const remainder = roundCurrency(totalAmount - sumAllocationAmounts(allocations));
+
+  if (remainder !== 0) {
+    allocations[0].amount = roundCurrency(Number(allocations[0].amount) + remainder).toFixed(2);
+  }
+
+  return allocations;
+}
+
+function sumAllocationAmounts(allocations: Array<{ amount: string }>) {
+  return roundCurrency(allocations.reduce((sum, allocation) => sum + (Number(allocation.amount) || 0), 0));
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 function findVaultForText(text: string, vaultRows: Array<{ id: string; categories: VaultCategoryOption[] }>) {
@@ -2853,6 +3018,22 @@ function formatCloseAction(value: unknown) {
 
 function labelize(value: string) {
   return value.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function mergeMemoryRecords(primaryRecords: MemoryRecord[], fallbackRecords: MemoryRecord[]) {
+  const recordsByKey = new Map<string, MemoryRecord>();
+
+  for (const record of [...primaryRecords, ...fallbackRecords]) {
+    const key = record.memoryRef || record.walrusBlobId || record.id;
+
+    if (!recordsByKey.has(key)) {
+      recordsByKey.set(key, record);
+    }
+  }
+
+  return Array.from(recordsByKey.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
 }
 
 function parseRecalledMemory(text: string): ParsedRecalledMemory {
