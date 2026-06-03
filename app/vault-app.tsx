@@ -357,7 +357,7 @@ export function VaultApp() {
       limit: 50,
       order: "descending",
     },
-    { enabled: openDrawer === "history" && Boolean(account?.address) },
+    { enabled: Boolean(account?.address) && (openDrawer === "history" || Boolean(openVaultDetails)) },
   );
 
   const { mutate: signAndExecute, isPending } = useSignAndExecuteTransaction({
@@ -466,6 +466,10 @@ export function VaultApp() {
 
     return balances;
   }, [spendHistoryRows, vaultRows]);
+  const activeVaultDetails = useMemo(
+    () => openVaultDetails ? vaultRows.find((vault) => vault.id === openVaultDetails.id) ?? openVaultDetails : null,
+    [openVaultDetails, vaultRows],
+  );
 
   const spendHistoryColumns: ColumnsType<HistoryEvent> = [
     {
@@ -798,6 +802,7 @@ export function VaultApp() {
             toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
           });
           ownedVaults.refetch();
+          historyEvents.refetch();
         },
         onError: (error) => {
           saveFailedTransactionMemory(memory);
@@ -916,6 +921,7 @@ export function VaultApp() {
             toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
           });
           ownedVaults.refetch();
+          historyEvents.refetch();
           onComplete?.();
         },
         onError: (error) => {
@@ -1418,23 +1424,23 @@ export function VaultApp() {
         width={760}
         style={{ top: 96 }}
       >
-        {openVaultDetails ? (
+        {activeVaultDetails ? (
           <div className="vault-details-modal">
             <div className="memory-record-modal-meta">
               <div>
                 <Typography.Text type="secondary">Vault</Typography.Text>
-                <Typography.Text strong>{shortId(openVaultDetails.id)}</Typography.Text>
+                <Typography.Text strong>{shortId(activeVaultDetails.id)}</Typography.Text>
               </div>
               <div>
                 <Typography.Text type="secondary">Balance</Typography.Text>
                 <Typography.Text strong>
-                  {formatSuiWithUsd(openVaultDetails.balance, suiUsdPrice)}
+                  {formatSuiWithUsd(activeVaultDetails.balance, suiUsdPrice)}
                 </Typography.Text>
               </div>
               <div>
                 <Typography.Text type="secondary">Spent</Typography.Text>
                 <Typography.Text strong>
-                  {formatSuiWithUsd(openVaultDetails.spent, suiUsdPrice)}
+                  {formatSuiWithUsd(activeVaultDetails.spent, suiUsdPrice)}
                 </Typography.Text>
               </div>
             </div>
@@ -1447,7 +1453,7 @@ export function VaultApp() {
                 { title: "Spent", dataIndex: "spent", key: "spent" },
                 { title: "Remaining", dataIndex: "remaining", key: "remaining" },
               ]}
-              dataSource={vaultCategoryBalances.get(openVaultDetails.id) ?? []}
+              dataSource={vaultCategoryBalances.get(activeVaultDetails.id) ?? []}
               pagination={false}
               rowKey={(category) => category.id}
               size="small"
