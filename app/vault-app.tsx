@@ -1056,7 +1056,7 @@ export function VaultApp() {
       return;
     }
 
-    const draft = createActionDraft(text, vaultRows);
+    const draft = (await createOpenAiActionDraft(text, vaultRows, memories)) ?? createActionDraft(text, vaultRows);
 
     if (draft.kind === "budget") {
       setIsAICommanderOpen(false);
@@ -2006,7 +2006,7 @@ export function VaultApp() {
             <Input.TextArea
               className="intention-textarea !bg-white"
               disabled={isExecutingAI}
-              placeholder="e.g. 'send 0x... 0.001 for food', 'swap 1 from entertainment/utilities to transport', or 'create a 10 SUI monthly budget'..."
+              placeholder="e.g. 'send 0x... 0.001 for food', 'swap 1 from entertainment/utilities to transport', or 'create a 10 SUI monthly budget', Remeber, Recall..."
               autoSize={{ minRows: 5, maxRows: 40 }}
               value={assistantText}
               onChange={(e) => setAssistantText(e.target.value)}
@@ -2276,6 +2276,43 @@ function CategorySelect({ categories = [], ...props }: CategorySelectProps) {
 type AssistantDraft =
   | { kind: "budget"; values: Partial<CreateBudgetValues> }
   | { kind: "action"; values: Partial<ActionValues> & Pick<ActionValues, "action"> };
+
+type IntentionDraftApiResponse = {
+  draft?: AssistantDraft | null;
+  error?: string;
+};
+
+async function createOpenAiActionDraft(
+  text: string,
+  vaultRows: VaultRow[],
+  memories: RecalledMemory[],
+): Promise<AssistantDraft | null> {
+  try {
+    const response = await fetch("/api/intentions/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        vaultRows: vaultRows.map((vault) => ({
+          id: vault.id,
+          categories: vault.categories,
+        })),
+        memories,
+      }),
+    });
+    const payload = (await response.json()) as IntentionDraftApiResponse;
+
+    if (!response.ok) {
+      console.warn(payload.error ?? "OpenAI intention drafting failed.");
+      return null;
+    }
+
+    return payload.draft ?? null;
+  } catch (error) {
+    console.warn(error instanceof Error ? error.message : "OpenAI intention drafting failed.");
+    return null;
+  }
+}
 
 function createActionDraft(text: string, vaultRows: Array<{ id: string; categories: VaultCategoryOption[] }>): AssistantDraft {
   const lower = text.toLowerCase();
