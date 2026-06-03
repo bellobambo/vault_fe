@@ -30,8 +30,13 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to read Walrus blob.";
     return Response.json(
-      { error: error instanceof Error ? error.message : "Unable to read Walrus blob." },
+      {
+        error: message.includes("ENOENT")
+          ? "Walrus CLI is not available in this server runtime. Use the Walrus HTTP aggregator or configure WALRUS_STORAGE_DRIVER=http."
+          : message,
+      },
       { status: 500 },
     );
   }

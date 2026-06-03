@@ -39,8 +39,13 @@ export async function POST(request: Request) {
 
     return Response.json({ result });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to store file on Walrus.";
     return Response.json(
-      { error: error instanceof Error ? error.message : "Unable to store file on Walrus." },
+      {
+        error: message.includes("ENOENT")
+          ? "Walrus CLI is not available in this server runtime. Use the Walrus HTTP publisher or configure WALRUS_STORAGE_DRIVER=http."
+          : message,
+      },
       { status: 500 },
     );
   }

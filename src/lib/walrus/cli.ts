@@ -6,6 +6,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_WALRUS_PUBLISHER_URL = "https://publisher.walrus-testnet.walrus.space";
+const DEFAULT_WALRUS_AGGREGATOR_URL = "https://aggregator.walrus-testnet.walrus.space";
 
 export type WalrusStoreResult = {
   blobId: string;
@@ -35,7 +37,40 @@ type WalrusCliStoreEntry = {
   path?: string;
 };
 
+type WalrusHttpStoreResponse = {
+  newlyCreated?: {
+    blobObject?: {
+      id?: string;
+      blobId?: string;
+      size?: number;
+      storage?: {
+        endEpoch?: number;
+      };
+    };
+  };
+  alreadyCertified?: {
+    blobId?: string;
+    endEpoch?: number;
+  };
+};
+
 export async function storeBufferOnWalrus({
+  data,
+  filename,
+  epochs,
+}: {
+  data: Buffer;
+  filename: string;
+  epochs: string;
+}): Promise<WalrusStoreResult> {
+  if ((process.env.WALRUS_STORAGE_DRIVER ?? "http") !== "cli") {
+    return storeBufferWithPublisher({ data, filename, epochs });
+  }
+
+  return storeBufferWithCli({ data, filename, epochs });
+}
+
+async function storeBufferWithCli({
   data,
   filename,
   epochs,
@@ -77,6 +112,14 @@ export async function storeBufferOnWalrus({
 }
 
 export async function readBlobFromWalrus(blobId: string): Promise<Buffer> {
+  if ((process.env.WALRUS_STORAGE_DRIVER ?? "http") !== "cli") {
+    return readBlobWithAggregator(blobId);
+  }
+
+  return readBlobWithCli(blobId);
+}
+
+async function readBlobWithCli(blobId: string): Promise<Buffer> {
   const workDir = path.join(tmpdir(), `vault-walrus-read-${randomUUID()}`);
   const outPath = path.join(workDir, "blob");
 
@@ -106,6 +149,51 @@ export async function readBlobFromWalrus(blobId: string): Promise<Buffer> {
   }
 }
 
+async function storeBufferWithPublisher({
+  data,
+  filename,
+  epochs,
+}: {
+  data: Buffer;
+  filename: string;
+  epochs: string;
+}): Promise<WalrusStoreResult> {
+  const publisherUrl = process.env.WALRUS_PUBLISHER_URL ?? DEFAULT_WALRUS_PUBLISHER_URL;
+  const url = new URL("/v1/blobs", publisherUrl);
+
+  if (epochs !== "max") {
+    url.searchParams.set("epochs", epochs);
+  }
+
+  const response = await fetch(url, {
+    method: "PUT",
+    body: new Uint8Array(data),
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-Vault-Filename": sanitizeFilename(filename),
+    },
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Walrus publisher failed (${response.status}): ${text || response.statusText}`);
+  }
+
+  return parseWalrusHttpStoreOutput(text, filename);
+}
+
+async function readBlobWithAggregator(blobId: string): Promise<Buffer> {
+  const aggregatorUrl = process.env.WALRUS_AGGREGATOR_URL ?? DEFAULT_WALRUS_AGGREGATOR_URL;
+  const url = new URL(`/v1/blobs/${encodeURIComponent(blobId)}`, aggregatorUrl);
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Walrus aggregator failed (${response.status}): ${await response.text() || response.statusText}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
 function parseWalrusStoreOutput(output: string, fallbackPath: string): WalrusStoreResult {
   const trimmed = output.trim();
   const jsonStart = trimmed.indexOf("[");
@@ -131,6 +219,25 @@ function parseWalrusStoreOutput(output: string, fallbackPath: string): WalrusSto
     endEpoch: newlyCreated?.storage?.endEpoch ?? alreadyCertified?.endEpoch,
     size: newlyCreated?.size,
     path: entry?.path ?? fallbackPath,
+  };
+}
+
+function parseWalrusHttpStoreOutput(output: string, fallbackPath: string): WalrusStoreResult {
+  const parsed = JSON.parse(output) as WalrusHttpStoreResponse;
+  const newlyCreated = parsed.newlyCreated?.blobObject;
+  const alreadyCertified = parsed.alreadyCertified;
+  const blobId = newlyCreated?.blobId ?? alreadyCertified?.blobId;
+
+  if (!blobId) {
+    throw new Error("Walrus publisher response did not include a blob ID.");
+  }
+
+  return {
+    blobId,
+    objectId: newlyCreated?.id,
+    endEpoch: newlyCreated?.storage?.endEpoch ?? alreadyCertified?.endEpoch,
+    size: newlyCreated?.size,
+    path: fallbackPath,
   };
 }
 
