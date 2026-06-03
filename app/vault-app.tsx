@@ -271,9 +271,15 @@ export function VaultApp() {
 
   // Handle form value changes to auto-calculate Other category in real-time
   function handleCreateFormValuesChange(
-    _changedFields: Partial<CreateBudgetValues>,
+    changedFields: Partial<CreateBudgetValues>,
     allFields: Partial<CreateBudgetValues>,
   ) {
+    const changedAllocation = changedFields.allocations?.find((allocation) => allocation);
+
+    if (changedAllocation?.categoryId === 4 || changedFields.allocations?.[4]?.amount !== undefined) {
+      return;
+    }
+
     const allocations = allFields.allocations || [];
     const firstFourAmounts = allocations
       .slice(0, 4)
