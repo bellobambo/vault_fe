@@ -28,16 +28,19 @@ Most budgeting tools only track spending after the money is already gone. Vault 
    - Other
 4. The user can spend from a category.
 5. The user can swap unused allocation between categories.
-6. If enabled, the user can overspend with a contract-controlled fee.
-7. When a budget cycle ends, the user can withdraw remaining SUI or redistribute it into a new budget cycle.
-8. The app saves transaction notes and receipts to MemWal/Walrus.
-9. The user can search past receipts, notes, and spending history later.
+6. The user can batch multiple spends, swaps, and overspends into one Sui Programmable Transaction Block.
+7. If enabled, the user can overspend with a contract-controlled fee.
+8. When a budget cycle ends, the user can withdraw remaining SUI or redistribute it into a new budget cycle.
+9. The app saves transaction notes and receipts to MemWal/Walrus.
+10. The user can search past receipts, notes, and spending history later.
 
 ## Why Sui
 
 Vault uses Sui because Sui assets are objects, not just balances. This makes it a good fit for programmable budgeting.
 
 The budget vault is an onchain object that owns and manages SUI. The Move contract controls who can spend, which category the spend comes from, and what happens when the user swaps or overspends.
+
+Vault also uses Sui Programmable Transaction Blocks in the frontend so a student can combine multiple category actions into one wallet confirmation. For example, a single batch transaction can spend for books and swap unused transport funds into academics atomically.
 
 ## Smart Contract
 
@@ -94,7 +97,24 @@ swap 1 from entertainment/utilities to transport
 move 0.5 from food to academics
 ```
 
-The app parses the user intent and fills the transaction form.
+Example batch transaction prompt:
+
+```text
+send 0.001 SUI to 0xRECIPIENT for books and swap 0.05 SUI from transportation to academics
+```
+
+The app uses the intention flow to draft actions, detect categories, and prepare single or batch transactions. Batch Transactions use Sui PTBs so multiple requests can be sent with one wallet confirmation.
+
+## Batch Transactions with PTBs
+
+Vault supports Batch Transactions for students who need to perform multiple financial actions at once.
+
+- A batch can include multiple spends, swaps, and overspends.
+- The frontend builds one Sui Programmable Transaction Block containing the selected Move calls.
+- The user signs once in the wallet.
+- The batch is atomic: if one operation fails, the whole transaction rolls back.
+- Batch transaction records are saved to MemWal/Walrus like other transaction memories.
+- The app checks category remaining balances before signing and warns when a spend should be converted to overspend.
 
 ## SUI/USD Conversion
 
@@ -115,6 +135,7 @@ Vault fits the DeFi & Payments track because it turns simple payments into progr
 - SUI is locked into an onchain vault.
 - Spending is controlled by category rules.
 - Swapping reallocates budget mid-cycle.
+- Batch Transactions use Sui PTBs to execute multiple spends and swaps with one wallet confirmation.
 - Withdraw returns unspent funds after a budget cycle ends.
 - Redistribute reuses the remaining balance for a new budget cycle.
 - Overspending is enforced by contract logic and fees.

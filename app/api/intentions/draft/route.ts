@@ -30,6 +30,15 @@ type OpenAiIntentDraft = {
     toCategoryId: number | null;
     amount: string | null;
     note: string | null;
+    batchActions: Array<{
+      action: "spend" | "swap" | "overspend";
+      recipient: string | null;
+      categoryId: number | null;
+      fromCategoryId: number | null;
+      toCategoryId: number | null;
+      amount: string;
+      note: string | null;
+    }>;
   };
 };
 
@@ -57,6 +66,7 @@ const responseSchema = {
         "toCategoryId",
         "amount",
         "note",
+        "batchActions",
       ],
       properties: {
         action: { anyOf: [{ type: "string", enum: ["spend", "swap", "overspend"] }, { type: "null" }] },
@@ -103,6 +113,38 @@ const responseSchema = {
         },
         amount: { anyOf: [{ type: "string" }, { type: "null" }] },
         note: { anyOf: [{ type: "string" }, { type: "null" }] },
+        batchActions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["action", "recipient", "categoryId", "fromCategoryId", "toCategoryId", "amount", "note"],
+            properties: {
+              action: { type: "string", enum: ["spend", "swap", "overspend"] },
+              recipient: { anyOf: [{ type: "string" }, { type: "null" }] },
+              categoryId: {
+                anyOf: [
+                  { type: "integer", enum: DEFAULT_CATEGORIES.map((category) => category.id) },
+                  { type: "null" },
+                ],
+              },
+              fromCategoryId: {
+                anyOf: [
+                  { type: "integer", enum: DEFAULT_CATEGORIES.map((category) => category.id) },
+                  { type: "null" },
+                ],
+              },
+              toCategoryId: {
+                anyOf: [
+                  { type: "integer", enum: DEFAULT_CATEGORIES.map((category) => category.id) },
+                  { type: "null" },
+                ],
+              },
+              amount: { type: "string" },
+              note: { anyOf: [{ type: "string" }, { type: "null" }] },
+            },
+          },
+        },
       },
     },
   },
@@ -149,6 +191,9 @@ export async function POST(request: Request) {
               "For budget drafts, set memoryTitle to 'AI drafted budget', memoryBody to the original user text, and include five allocation rows.",
               "If a budget gives only a total amount, split it across all five categories with Food and Transport slightly higher priority.",
               "For action drafts, use only a vaultId from the provided vaults. If none is clear, use the latest vault when available.",
+              "For multi-action prompts, return one action draft with batchActions filled in order. Set top-level action to spend, top-level amount to the first operation amount, and use null for top-level single-action fields when they do not apply.",
+              "Detect category aliases from natural language: transport, transportation, bus, taxi, and fares mean Transport; books, textbooks, school, fees, and academics mean Academics; entertainment, utilities, data, internet, and light mean Entertainment/Utilities.",
+              "For swap operations, fill fromCategoryId and toCategoryId whenever the source and destination categories are stated.",
               "Do not invent Sui addresses.",
             ].join(" "),
           },
@@ -307,9 +352,12 @@ function normalizeDraft(draft: OpenAiIntentDraft, originalText: string, vaultRow
   }
 
   if (draft.kind === "action") {
+    const batchActions = normalizeBatchActions(draft.values.batchActions);
+
     return {
       kind: "action",
       values: {
+        mode: batchActions.length > 1 ? "batch" : "single",
         action: draft.values.action ?? "spend",
         vaultId: draft.values.vaultId && vaultRows.some((vault) => vault.id === draft.values.vaultId)
           ? draft.values.vaultId
@@ -320,11 +368,30 @@ function normalizeDraft(draft: OpenAiIntentDraft, originalText: string, vaultRow
         toCategoryId: draft.values.toCategoryId ?? undefined,
         amount: draft.values.amount ?? "",
         note: draft.values.note || originalText,
+        batchActions,
       },
     };
   }
 
   return null;
+}
+
+function normalizeBatchActions(actions: OpenAiIntentDraft["values"]["batchActions"]) {
+  return actions.flatMap((action) => {
+    if (!action.amount) {
+      return [];
+    }
+
+    return [{
+      action: action.action,
+      recipient: action.recipient ?? undefined,
+      categoryId: action.categoryId ?? undefined,
+      fromCategoryId: action.fromCategoryId ?? undefined,
+      toCategoryId: action.toCategoryId ?? undefined,
+      amount: action.amount,
+      note: action.note ?? undefined,
+    }];
+  });
 }
 
 function normalizeAllocations(allocations: OpenAiIntentDraft["values"]["allocations"]) {

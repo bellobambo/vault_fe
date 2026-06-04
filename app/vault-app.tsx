@@ -12,8 +12,10 @@ import {
 import { registerSlushWallet } from "@mysten/slush-wallet";
 import {
   CloudDownloadOutlined,
+  DeleteOutlined,
   ExportOutlined,
   FileTextOutlined,
+  PlusOutlined,
   RobotOutlined,
   SendOutlined,
   SyncOutlined,
@@ -52,6 +54,7 @@ import {
   VAULT_PACKAGE_ID,
 } from "@/src/config/vault";
 import {
+  buildBatchVaultActionsTransaction,
   buildCloseBudgetTransaction,
   buildCreateBudgetTransaction,
   buildOverspendTransaction,
@@ -62,7 +65,6 @@ import {
 } from "@/src/lib/sui/vault";
 import {
   createMemoryRecord,
-  getFallbackMemoryRecordDrafts,
   getMemoryRecordDrafts,
   saveMemoryRecordDraft,
   serializeMemoryRecord,
@@ -92,6 +94,18 @@ type VaultCategoryOption = {
   id: number;
   name: string;
   allocation: string | number | bigint;
+  remaining?: string;
+};
+
+type VaultCategoryBalance = {
+  id: number;
+  name: string;
+  allocation: string;
+  allocationMist: string;
+  spent: string;
+  spentMist: string;
+  remaining: string;
+  remainingMist: string;
 };
 
 type VaultRow = {
@@ -117,6 +131,7 @@ type FinancialMemoryAnswer = {
 };
 
 type ActionValues = {
+  mode?: "single" | "batch";
   action: "spend" | "swap" | "overspend";
   vaultId: string;
   recipient?: string;
@@ -125,7 +140,18 @@ type ActionValues = {
   toCategoryId?: number;
   amount: string;
   note?: string;
+  batchActions?: BatchActionValues[];
   _skipOverspendCheck?: boolean;
+};
+
+type BatchActionValues = {
+  action: "spend" | "swap" | "overspend";
+  recipient?: string;
+  categoryId?: number;
+  fromCategoryId?: number;
+  toCategoryId?: number;
+  amount?: string;
+  note?: string;
 };
 
 type DrawerKey = "createBudget" | "actions" | "storage" | "history" | "assistant";
@@ -209,6 +235,7 @@ export function VaultApp() {
   const [actionForm] = Form.useForm<ActionValues>();
   const [documentForm] = Form.useForm();
   const actionAmount = Form.useWatch("amount", actionForm);
+  const actionVaultId = Form.useWatch("vaultId", actionForm);
   const documentFileInputRef = useRef<HTMLInputElement>(null);
   const [openDrawer, setOpenDrawer] = useState<DrawerKey | null>(null);
   const [activeAction, setActiveAction] = useState<ActionValues["action"]>("spend");
@@ -227,6 +254,7 @@ export function VaultApp() {
   const [suiUsdUpdatedAt, setSuiUsdUpdatedAt] = useState<string>();
   const [assistantText, setAssistantText] = useState("");
   const [isRemembering, setIsRemembering] = useState(false);
+  const [, setActionFormVersion] = useState(0);
   const [isLoadingMemoryRecords, setIsLoadingMemoryRecords] = useState(false);
   const [isRecalling, setIsRecalling] = useState(false);
   const [isExecutingAI, setIsExecutingAI] = useState(false);
@@ -235,6 +263,7 @@ export function VaultApp() {
   const [lastRestoreSummary, setLastRestoreSummary] = useState<string>();
   const [lastDigest, setLastDigest] = useState<string>();
   const [actionCategories, setActionCategories] = useState<VaultCategoryOption[]>([]);
+  const [actionMode, setActionMode] = useState<"single" | "batch">("single");
   const [networkMemoryRecords, setNetworkMemoryRecords] = useState<MemoryRecord[]>([]);
   const [networkMemoryRecordsOwner, setNetworkMemoryRecordsOwner] = useState<string>();
   const hasManuallyEditedOtherAllocationRef = useRef(false);
@@ -290,9 +319,7 @@ export function VaultApp() {
   const hasNetworkMemoryRecords = Boolean(
     account?.address && networkMemoryRecordsOwner?.toLowerCase() === account.address.toLowerCase(),
   );
-  const localMemoryRecords = hasNetworkMemoryRecords
-    ? getFallbackMemoryRecordDrafts(account?.address)
-    : getMemoryRecordDrafts(account?.address);
+  const localMemoryRecords = getMemoryRecordDrafts(account?.address);
   const memoryRecords = hasNetworkMemoryRecords
     ? mergeMemoryRecords(networkMemoryRecords, localMemoryRecords)
     : localMemoryRecords;
@@ -443,7 +470,7 @@ export function VaultApp() {
   );
 
   const vaultCategoryBalances = useMemo(() => {
-    const balances = new Map<string, Array<{ id: number; name: string; allocation: string; spent: string; remaining: string }>>();
+    const balances = new Map<string, VaultCategoryBalance[]>();
 
     for (const vault of vaultRows) {
       balances.set(
@@ -462,8 +489,11 @@ export function VaultApp() {
             id: category.id,
             name: category.name,
             allocation: formatMist(allocationMist),
+            allocationMist: allocationMist.toString(),
             spent: formatMist(spentMist),
+            spentMist: spentMist.toString(),
             remaining: formatMist(allocationMist - spentMist),
+            remainingMist: (allocationMist - spentMist).toString(),
           };
         }),
       );
@@ -471,6 +501,20 @@ export function VaultApp() {
 
     return balances;
   }, [spendHistoryRows, vaultRows]);
+  const actionCategoryOptions = useMemo<VaultCategoryOption[]>(() => {
+    const balances = actionVaultId ? vaultCategoryBalances.get(actionVaultId) : undefined;
+
+    if (balances?.length) {
+      return balances.map((category) => ({
+        id: category.id,
+        name: category.name,
+        allocation: category.allocationMist,
+        remaining: category.remaining,
+      }));
+    }
+
+    return actionCategories;
+  }, [actionCategories, actionVaultId, vaultCategoryBalances]);
   const activeVaultDetails = useMemo(
     () => openVaultDetails ? vaultRows.find((vault) => vault.id === openVaultDetails.id) ?? openVaultDetails : null,
     [openVaultDetails, vaultRows],
@@ -527,7 +571,15 @@ export function VaultApp() {
       title: "Tx",
       key: "tx",
       width: 100,
-      render: (_value, item) => shortId(item.event.id.txDigest),
+      render: (_value, item) => (
+        <a
+          href={getSuiExplorerTxUrl(item.event.id.txDigest)}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {shortId(item.event.id.txDigest)}
+        </a>
+      ),
     },
   ];
 
@@ -572,7 +624,15 @@ export function VaultApp() {
       title: "Tx",
       key: "tx",
       width: 100,
-      render: (_value, item) => shortId(item.event.id.txDigest),
+      render: (_value, item) => (
+        <a
+          href={getSuiExplorerTxUrl(item.event.id.txDigest)}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {shortId(item.event.id.txDigest)}
+        </a>
+      ),
     },
   ];
 
@@ -836,7 +896,252 @@ export function VaultApp() {
     );
   }
 
+  function validateBatchCategoryCapacity(vaultId: string, batchActions: BatchActionValues[]) {
+    const balances = vaultCategoryBalances.get(vaultId);
+
+    if (!balances?.length) {
+      return { overspendRows: [], invalidSwapRows: [] };
+    }
+
+    const ledger = new Map(balances.map((category) => [category.id, BigInt(category.remainingMist)]));
+    const overspendRows: Array<{ index: number; categoryName: string; amount: string; remaining: string }> = [];
+    const invalidSwapRows: Array<{ index: number; categoryName: string; amount: string; remaining: string }> = [];
+
+    for (const [index, item] of batchActions.entries()) {
+      if (!item.amount) {
+        continue;
+      }
+
+      const amountMist = suiToMist(item.amount);
+
+      if (item.action === "swap") {
+        if (item.fromCategoryId === undefined || item.toCategoryId === undefined) {
+          continue;
+        }
+
+        const fromRemaining = ledger.get(item.fromCategoryId) ?? BigInt(0);
+        const fromCategory = balances.find((balance) => balance.id === item.fromCategoryId);
+
+        if (amountMist > fromRemaining) {
+          invalidSwapRows.push({
+            index,
+            categoryName: fromCategory?.name ?? `Category ${item.fromCategoryId}`,
+            amount: item.amount,
+            remaining: formatMist(fromRemaining),
+          });
+          continue;
+        }
+
+        ledger.set(item.fromCategoryId, fromRemaining - amountMist);
+        ledger.set(item.toCategoryId, (ledger.get(item.toCategoryId) ?? BigInt(0)) + amountMist);
+        continue;
+      }
+
+      if (item.action === "overspend" || item.categoryId === undefined) {
+        continue;
+      }
+
+      const remaining = ledger.get(item.categoryId) ?? BigInt(0);
+
+      if (amountMist > remaining) {
+        const category = balances.find((balance) => balance.id === item.categoryId);
+        overspendRows.push({
+          index,
+          categoryName: category?.name ?? `Category ${item.categoryId}`,
+          amount: item.amount,
+          remaining: formatMist(remaining),
+        });
+        continue;
+      }
+
+      ledger.set(item.categoryId, remaining - amountMist);
+    }
+
+    return { overspendRows, invalidSwapRows };
+  }
+
+  async function handleBatchVaultActions(values: ActionValues, onComplete?: () => void) {
+    if (!account) {
+      toast.error("Connect your Sui wallet first.");
+      onComplete?.();
+      return;
+    }
+
+    const vault = vaultRows.find((v) => v.id === values.vaultId);
+    const batchActions = (values.batchActions ?? []).filter((item) => item?.action);
+
+    if (!values.vaultId || batchActions.length === 0) {
+      toast.error("Add at least one PTB operation.");
+      onComplete?.();
+      return;
+    }
+
+    if (!values._skipOverspendCheck) {
+      try {
+        const { overspendRows, invalidSwapRows } = validateBatchCategoryCapacity(values.vaultId, batchActions);
+
+        if (invalidSwapRows.length > 0) {
+          Modal.warning({
+            title: "Batch swap exceeds remaining balance",
+            content: (
+              <div className="space-y-2">
+                <Typography.Paragraph>
+                  Adjust these swap rows before signing the PTB.
+                </Typography.Paragraph>
+                {invalidSwapRows.map((row) => (
+                  <Typography.Text className="block" key={row.index}>
+                    Operation {row.index + 1}: {row.categoryName} swaps {row.amount} SUI with {row.remaining} remaining.
+                  </Typography.Text>
+                ))}
+              </div>
+            ),
+            onOk: () => onComplete?.(),
+          });
+          return;
+        }
+
+        if (overspendRows.length > 0) {
+          Modal.confirm({
+            title: "Batch includes likely overspend",
+            content: (
+              <div className="space-y-2">
+                <Typography.Paragraph>
+                  These normal spend rows exceed the remaining category balance. Convert them to Overspend to continue, or review the batch.
+                </Typography.Paragraph>
+                {overspendRows.map((row) => (
+                  <Typography.Text className="block" key={row.index}>
+                    Operation {row.index + 1}: {row.categoryName} spends {row.amount} SUI with {row.remaining} remaining.
+                  </Typography.Text>
+                ))}
+              </div>
+            ),
+            okText: "Convert to overspend",
+            cancelText: "Review batch",
+            onCancel: () => onComplete?.(),
+            onOk: () => {
+              const overspendIndexes = new Set(overspendRows.map((row) => row.index));
+              const convertedActions = batchActions.map((item, index) => (
+                overspendIndexes.has(index) ? { ...item, action: "overspend" as const } : item
+              ));
+
+              actionForm.setFieldValue("batchActions", convertedActions);
+              void handleBatchVaultActions(
+                { ...values, batchActions: convertedActions, _skipOverspendCheck: true },
+                onComplete,
+              );
+            },
+          });
+          return;
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to validate batch PTB.");
+        onComplete?.();
+        return;
+      }
+    }
+
+    try {
+      const memory = createMemoryDraft({
+        kind: "history",
+        title: `Batch Transactions (${batchActions.length} ${batchActions.length === 1 ? "request" : "requests"})`,
+        body: [
+          `Action: batch PTB`,
+          `Vault: ${values.vaultId}`,
+          ...batchActions.map((item, index) => {
+            const category = item.categoryId !== undefined
+              ? vault?.categories.find((c) => c.id === item.categoryId)?.name ?? item.categoryId
+              : undefined;
+            const fromCategory = item.fromCategoryId !== undefined
+              ? vault?.categories.find((c) => c.id === item.fromCategoryId)?.name ?? item.fromCategoryId
+              : undefined;
+            const toCategory = item.toCategoryId !== undefined
+              ? vault?.categories.find((c) => c.id === item.toCategoryId)?.name ?? item.toCategoryId
+              : undefined;
+
+            return [
+              `${index + 1}. ${item.action}`,
+              item.amount ? `${item.amount} SUI` : undefined,
+              category !== undefined ? `category ${category}` : undefined,
+              fromCategory !== undefined && toCategory !== undefined ? `from ${fromCategory} to ${toCategory}` : undefined,
+              item.recipient ? `to ${item.recipient}` : undefined,
+              item.note,
+            ]
+              .filter(Boolean)
+              .join(" ");
+          }),
+        ].join("\n"),
+      });
+
+      const tx = buildBatchVaultActionsTransaction(
+        batchActions.map((item) => {
+          const amountMist = suiToMist(item.amount ?? "");
+
+          if (item.action === "swap") {
+            if (item.fromCategoryId === undefined || item.toCategoryId === undefined) {
+              throw new Error("Every swap operation needs both source and destination categories.");
+            }
+
+            return {
+              action: "swap",
+              vaultId: values.vaultId,
+              fromCategoryId: Number(item.fromCategoryId),
+              toCategoryId: Number(item.toCategoryId),
+              amountMist,
+            };
+          }
+
+          if (!item.recipient || item.categoryId === undefined) {
+            throw new Error("Every spend or overspend operation needs a recipient and category.");
+          }
+
+          return {
+            action: item.action,
+            vaultId: values.vaultId,
+            categoryId: Number(item.categoryId),
+            recipient: item.recipient,
+            amountMist,
+            note: memory.memoryRef,
+          };
+        }),
+      );
+
+      signAndExecute(
+        { transaction: tx, chain: "sui:testnet" },
+        {
+          onSuccess: (result) => {
+            setLastDigest(result.digest);
+            setOpenDrawer(null);
+            actionForm.resetFields();
+            setActionCategories([]);
+            setActionMode("single");
+            setActiveAction("spend");
+            toast.success(`${batchActions.length} ${batchActions.length === 1 ? "request was" : "requests were"} sent successfully.`);
+            void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
+              toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
+            });
+            ownedVaults.refetch();
+            historyEvents.refetch();
+            onComplete?.();
+          },
+          onError: (error) => {
+            saveFailedTransactionMemory(memory);
+            toast.error(error.message);
+            onComplete?.();
+          },
+        },
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to build batch PTB.");
+      onComplete?.();
+    }
+  }
+
   async function handleVaultAction(values: ActionValues, onComplete?: () => void) {
+    if (values.mode === "batch") {
+      await handleBatchVaultActions(values, onComplete);
+      return;
+    }
+
     if (!account) {
       toast.error("Connect your Sui wallet first.");
       onComplete?.();
@@ -1101,7 +1406,10 @@ export function VaultApp() {
         throw new Error("error" in payload && payload.error ? payload.error : "Unable to recall memory.");
       }
 
-      const memories = (payload as RecallApiResponse).result.results;
+      const memwalMemories = (payload as RecallApiResponse).result.results;
+      const localMatches = findLocalMemoryMatches(trimmed, memoryRecords, 6);
+      const memories = mergeRecalledMemories(localMatches, memwalMemories).slice(0, 6);
+
       setRecalledMemories(memories);
       setMemoryRecallEmptyMessage(
         memories.length === 0 ? `No saved memory matched "${trimmed}".` : null,
@@ -1227,16 +1535,18 @@ export function VaultApp() {
       return;
     }
 
-    const memories = await handleMemoryRecall(text);
-
     if (isMemoryLookupIntent(text)) {
+      const memories = await handleMemoryRecall(text);
+
       if (memories.length === 0) {
         toast.error("No matching memories found.");
       }
       return;
     }
 
-    const draft = (await createOpenAiActionDraft(text, vaultRows, memories)) ?? createActionDraft(text, vaultRows);
+    const draft = (await createOpenAiActionDraft(text, vaultRows, []))
+      ?? createBatchActionDraft(text, vaultRows)
+      ?? createActionDraft(text, vaultRows);
 
     if (draft.kind === "budget") {
       setIsAICommanderOpen(false);
@@ -1250,11 +1560,12 @@ export function VaultApp() {
 
     const vault = vaultRows.find((item) => item.id === draft.values.vaultId);
     setActionCategories(vault?.categories ?? []);
+    setActionMode(draft.values.mode ?? "single");
     setActiveAction(draft.values.action);
     actionForm.setFieldsValue(draft.values);
 
     // Direct Execution: Instead of opening drawer, trigger the action handler directly
-    if (draft.values.vaultId && draft.values.amount) {
+    if (isExecutableActionDraft(draft.values)) {
       setIsExecutingAI(true);
       handleVaultAction(draft.values as ActionValues, () => {
         setIsExecutingAI(false);
@@ -1464,8 +1775,10 @@ export function VaultApp() {
                           size="small"
                           onClick={() => {
                             actionForm.setFieldValue("vaultId", vault.id);
+                            actionForm.setFieldValue("mode", "single");
                             actionForm.setFieldValue("action", "spend");
                             setActionCategories(vault.categories);
+                            setActionMode("single");
                             setActiveAction("spend");
                             setOpenDrawer("actions");
                           }}
@@ -1477,8 +1790,10 @@ export function VaultApp() {
                           size="small"
                           onClick={() => {
                             actionForm.setFieldValue("vaultId", vault.id);
+                            actionForm.setFieldValue("mode", "single");
                             actionForm.setFieldValue("action", "swap");
                             setActionCategories(vault.categories);
+                            setActionMode("single");
                             setActiveAction("swap");
                             setOpenDrawer("actions");
                           }}
@@ -1720,6 +2035,7 @@ export function VaultApp() {
         onClose={() => {
           setOpenDrawer(null);
           setActionCategories([]);
+          setActionMode("single");
           actionForm.resetFields();
         }}
         size="large"
@@ -1735,16 +2051,28 @@ export function VaultApp() {
         <Form
           form={actionForm}
           layout="vertical"
-          initialValues={{ action: "spend" }}
+          initialValues={{
+            mode: "single",
+            action: "spend",
+            batchActions: [{ action: "spend" }],
+          }}
           onFinish={handleVaultAction}
+          onValuesChange={() => setActionFormVersion((version) => version + 1)}
         >
-          <Form.Item name="action">
+          <Form.Item name="mode">
             <Radio.Group
               buttonStyle="solid"
-              onChange={(event) => setActiveAction(event.target.value)}
+              onChange={(event) => {
+                const nextMode = event.target.value as "single" | "batch";
+                setActionMode(nextMode);
+                actionForm.setFieldValue("mode", nextMode);
+                if (nextMode === "batch" && !actionForm.getFieldValue("batchActions")?.length) {
+                  actionForm.setFieldValue("batchActions", [{ action: "spend" }]);
+                }
+              }}
             >
-              <Radio.Button value="spend">Spend</Radio.Button>
-              <Radio.Button value="swap">Swap</Radio.Button>
+              <Radio.Button value="single">Single</Radio.Button>
+              <Radio.Button value="batch">Batch PTB</Radio.Button>
             </Radio.Group>
           </Form.Item>
 
@@ -1752,16 +2080,29 @@ export function VaultApp() {
             <Input placeholder="0x..." />
           </Form.Item>
 
+          {actionMode === "single" ? (
+            <>
+          <Form.Item name="action">
+            <Radio.Group
+              buttonStyle="solid"
+              onChange={(event) => setActiveAction(event.target.value)}
+            >
+              <Radio.Button value="spend">Spend</Radio.Button>
+              <Radio.Button value="swap">Swap</Radio.Button>
+              <Radio.Button value="overspend">Overspend</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+
           {activeAction === "swap" ? (
             <Row gutter={12}>
               <Col span={12}>
                 <Form.Item label="From" name="fromCategoryId" rules={[{ required: true }]}>
-                  <CategorySelect categories={actionCategories} />
+                  <CategorySelect categories={actionCategoryOptions} />
                 </Form.Item>
               </Col>
               <Col span={12}>
                 <Form.Item label="To" name="toCategoryId" rules={[{ required: true }]}>
-                  <CategorySelect categories={actionCategories} />
+                  <CategorySelect categories={actionCategoryOptions} />
                 </Form.Item>
               </Col>
             </Row>
@@ -1771,7 +2112,7 @@ export function VaultApp() {
                 <Input placeholder="0x..." />
               </Form.Item>
               <Form.Item label="Category" name="categoryId" rules={[{ required: true }]}>
-                <CategorySelect categories={actionCategories} />
+                <CategorySelect categories={actionCategoryOptions} />
               </Form.Item>
             </>
           )}
@@ -1783,9 +2124,96 @@ export function VaultApp() {
           <Form.Item label="Receipt note" name="note">
             <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="Lunch, textbook, transport fare..." />
           </Form.Item>
+            </>
+          ) : (
+            <Form.List name="batchActions">
+              {(fields, { add, remove }) => (
+                <div className="space-y-4">
+                  {fields.map((field, index) => {
+                    const operationAction = actionForm.getFieldValue(["batchActions", field.name, "action"]) as BatchActionValues["action"] | undefined;
+
+                    return (
+                      <Card
+                        className="compact-card centered-form-card"
+                        key={field.key}
+                        size="small"
+                        title={`PTB operation ${index + 1}`}
+                        extra={
+                          fields.length > 1 ? (
+                            <Button
+                              aria-label="Remove PTB operation"
+                              icon={<DeleteOutlined />}
+                              onClick={() => remove(field.name)}
+                              size="small"
+                              type="text"
+                            />
+                          ) : null
+                        }
+                      >
+                        <Form.Item
+                          label="Operation"
+                          name={[field.name, "action"]}
+                          rules={[{ required: true }]}
+                        >
+                          <Radio.Group buttonStyle="solid">
+                            <Radio.Button value="spend">Spend</Radio.Button>
+                            <Radio.Button value="swap">Swap</Radio.Button>
+                            <Radio.Button value="overspend">Overspend</Radio.Button>
+                          </Radio.Group>
+                        </Form.Item>
+
+                        {operationAction === "swap" ? (
+                          <Row gutter={12}>
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="From" name={[field.name, "fromCategoryId"]} rules={[{ required: true }]}>
+                                <CategorySelect categories={actionCategoryOptions} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12}>
+                              <Form.Item label="To" name={[field.name, "toCategoryId"]} rules={[{ required: true }]}>
+                                <CategorySelect categories={actionCategoryOptions} />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                        ) : (
+                          <Row gutter={12}>
+                            <Col xs={24} sm={14}>
+                              <Form.Item label="Recipient" name={[field.name, "recipient"]} rules={[{ required: true }]}>
+                                <Input placeholder="0x..." />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={10}>
+                              <Form.Item label="Category" name={[field.name, "categoryId"]} rules={[{ required: true }]}>
+                                <CategorySelect categories={actionCategoryOptions} />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                        )}
+
+                        <Form.Item label="Amount" name={[field.name, "amount"]} rules={[{ required: true }]}>
+                          <Input suffix="SUI" />
+                        </Form.Item>
+                        <Form.Item label="Note" name={[field.name, "note"]}>
+                          <Input.TextArea autoSize={{ minRows: 1, maxRows: 3 }} placeholder="Optional note for this operation" />
+                        </Form.Item>
+                      </Card>
+                    );
+                  })}
+
+                  <Button
+                    block
+                    icon={<PlusOutlined />}
+                    onClick={() => add({ action: "spend" })}
+                  >
+                    Add PTB operation
+                  </Button>
+                </div>
+              )}
+            </Form.List>
+          )}
 
           <Button block htmlType="submit" loading={isPending || isRemembering} type="primary">
-            Send {activeAction}
+            {actionMode === "batch" ? "Send batch PTB" : `Send ${activeAction}`}
           </Button>
         </Form>
       </Drawer>
@@ -2331,6 +2759,9 @@ type ParsedRecalledMemory = {
   action?: string;
   amount?: string;
   category?: string;
+  created?: string;
+  attachmentName?: string;
+  attachmentWalrusBlobId?: string;
 };
 
 function SuiUsdRateText({
@@ -2460,13 +2891,37 @@ function MemoryRecallResults({
                     Category: <span>{formatRecalledCategory(parsed.category)}</span>
                   </Typography.Text>
                 ) : null}
+                {parsed.created ? (
+                  <Typography.Text>
+                    Saved: <span>{formatMemoryCreated(parsed.created)}</span>
+                  </Typography.Text>
+                ) : null}
+                {parsed.attachmentName ? (
+                  <Typography.Text>
+                    File: <span>{parsed.attachmentName}</span>
+                  </Typography.Text>
+                ) : null}
                 <Typography.Text>
                   Walrus blob: <span>{shortId(memory.blob_id)}</span>
                 </Typography.Text>
               </div>
 
               <div className="recalled-memory-footer">
-                <span />
+                {parsed.attachmentWalrusBlobId ? (
+                  <Button
+                    icon={<CloudDownloadOutlined />}
+                    onClick={() => void downloadWalrusAttachment(
+                      parsed.attachmentWalrusBlobId ?? "",
+                      parsed.attachmentName ?? `${parsed.title}.download`,
+                    )}
+                    size="small"
+                    type="text"
+                  >
+                    Download
+                  </Button>
+                ) : (
+                  <span />
+                )}
                 <Tag className="theme-tag">
                   {formatRecallMatch(memory.distance)} match
                 </Tag>
@@ -2488,7 +2943,9 @@ function CategorySelect({ categories = [], ...props }: CategorySelectProps) {
       className={["theme-control", props.className].filter(Boolean).join(" ")}
       options={categoryOptions.map((category) => ({
         label:
-          "allocation" in category
+          "remaining" in category && category.remaining
+            ? `${category.name} (${category.remaining} remaining)`
+            : "allocation" in category
             ? `${category.name} (${formatMist(category.allocation)})`
             : category.name,
         value: category.id,
@@ -2606,6 +3063,111 @@ function createActionDraft(text: string, vaultRows: Array<{ id: string; categori
       note: text,
     },
   };
+}
+
+function createBatchActionDraft(text: string, vaultRows: Array<{ id: string; categories: VaultCategoryOption[] }>): AssistantDraft | null {
+  const lower = text.toLowerCase();
+  const actionCount = (lower.match(/\b(spend|send|pay|swap|move|overspend)\b/g) ?? []).length;
+
+  if (actionCount < 2) {
+    return null;
+  }
+
+  const vault = findVaultForText(text, vaultRows);
+  const segments = splitActionSegments(text);
+
+  if (segments.length < 2) {
+    return null;
+  }
+
+  const batchActions = segments.flatMap((segment): BatchActionValues[] => {
+    const draft = createActionDraft(segment, vaultRows);
+
+    if (draft.kind !== "action" || draft.values.action === undefined) {
+      return [];
+    }
+
+    if (
+      draft.values.action === "swap" &&
+      (draft.values.fromCategoryId === undefined || draft.values.toCategoryId === undefined)
+    ) {
+      return [];
+    }
+
+    if (
+      draft.values.action !== "swap" &&
+      (!draft.values.recipient || draft.values.categoryId === undefined)
+    ) {
+      return [];
+    }
+
+    return [{
+      action: draft.values.action,
+      recipient: draft.values.recipient,
+      categoryId: draft.values.categoryId,
+      fromCategoryId: draft.values.fromCategoryId,
+      toCategoryId: draft.values.toCategoryId,
+      amount: draft.values.amount,
+      note: segment.trim(),
+    }];
+  });
+
+  if (batchActions.length < 2) {
+    return null;
+  }
+
+  return {
+    kind: "action",
+    values: {
+      mode: "batch",
+      action: "spend",
+      vaultId: vault?.id,
+      amount: batchActions[0]?.amount ?? "",
+      note: text,
+      batchActions,
+    },
+  };
+}
+
+function isExecutableActionDraft(values: Partial<ActionValues> & Pick<ActionValues, "action">) {
+  if (!values.vaultId) {
+    return false;
+  }
+
+  if (values.mode === "batch") {
+    const batchActions = values.batchActions ?? [];
+
+    return batchActions.length > 0 && batchActions.every((action) => {
+      if (!action.amount) {
+        return false;
+      }
+
+      if (action.action === "swap") {
+        return action.fromCategoryId !== undefined && action.toCategoryId !== undefined;
+      }
+
+      return Boolean(action.recipient) && action.categoryId !== undefined;
+    });
+  }
+
+  if (!values.amount) {
+    return false;
+  }
+
+  if (values.action === "swap") {
+    return values.fromCategoryId !== undefined && values.toCategoryId !== undefined;
+  }
+
+  return Boolean(values.recipient) && values.categoryId !== undefined;
+}
+
+function splitActionSegments(text: string) {
+  const marker = "\n---VAULT_ACTION---";
+  return text
+    .replace(/\b(?:then|and|also)\s+(?=\b(?:spend|send|pay|swap|move|overspend)\b)/gi, marker)
+    .split(new RegExp(`${marker}|[;\n]+`, "g"))
+    .map((segment) => segment.trim())
+    .filter((segment) => /\b(spend|send|pay|swap|move|overspend)\b/i.test(segment));
 }
 
 function extractCycle(text: string): keyof typeof BUDGET_CYCLES {
@@ -2798,9 +3360,32 @@ function extractAddresses(text: string) {
 
 function extractCategoryMentions(text: string) {
   const lower = text.toLowerCase();
-  return DEFAULT_CATEGORIES.flatMap((category) =>
-    lower.includes(category.name.toLowerCase()) ? [category.id] : [],
-  );
+  return DEFAULT_CATEGORIES.flatMap((category) => {
+    const aliases = getCategoryAliases(category.id, category.name);
+    return aliases.some((alias) => new RegExp(`\\b${escapeRegExp(alias)}\\b`, "i").test(lower)) ? [category.id] : [];
+  });
+}
+
+function getCategoryAliases(categoryId: number, name: string) {
+  const aliases = [name.toLowerCase(), ...name.toLowerCase().split(/[\/&-]/).map((item) => item.trim())];
+
+  if (categoryId === 1) {
+    aliases.push("transport", "transportation", "transpo", "fare", "fares", "bus", "taxi");
+  }
+
+  if (categoryId === 2) {
+    aliases.push("academic", "academics", "school", "books", "book", "textbook", "textbooks", "fees", "fee");
+  }
+
+  if (categoryId === 3) {
+    aliases.push("entertainment", "utilities", "utility", "data", "internet", "light");
+  }
+
+  return [...new Set(aliases.filter(Boolean))];
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isMemoryLookupIntent(text: string) {
@@ -3170,6 +3755,68 @@ function mergeMemoryRecords(primaryRecords: MemoryRecord[], fallbackRecords: Mem
   );
 }
 
+function findLocalMemoryMatches(query: string, records: MemoryRecord[], limit: number) {
+  const normalizedQuery = normalizeSearchText(query);
+  const queryWords = normalizedQuery.split(" ").filter((word) => word.length > 1);
+
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  return records
+    .map((record) => {
+      const searchable = normalizeSearchText([
+        record.title,
+        record.body,
+        record.attachmentName,
+        record.kind,
+        record.tags?.join(" "),
+      ].filter(Boolean).join(" "));
+
+      if (!searchable) {
+        return null;
+      }
+
+      const isExactMatch = searchable.includes(normalizedQuery);
+      const matchedWords = queryWords.filter((word) => searchable.includes(word)).length;
+
+      if (!isExactMatch && matchedWords === 0) {
+        return null;
+      }
+
+      return {
+        memory: {
+          blob_id: record.walrusBlobId ?? record.attachmentWalrusBlobId ?? record.id,
+          text: serializeMemoryRecord(record),
+          distance: isExactMatch ? 0 : Math.max(0.05, 1 - matchedWords / Math.max(queryWords.length, 1)),
+        },
+        score: isExactMatch ? queryWords.length + 1 : matchedWords,
+      };
+    })
+    .filter((item): item is { memory: RecalledMemory; score: number } => Boolean(item))
+    .sort((a, b) => b.score - a.score || a.memory.distance - b.memory.distance)
+    .slice(0, limit)
+    .map((item) => item.memory);
+}
+
+function mergeRecalledMemories(primaryMemories: RecalledMemory[], fallbackMemories: RecalledMemory[]) {
+  const memoriesByKey = new Map<string, RecalledMemory>();
+
+  for (const memory of [...primaryMemories, ...fallbackMemories]) {
+    const key = memory.blob_id || memory.text;
+
+    if (!memoriesByKey.has(key)) {
+      memoriesByKey.set(key, memory);
+    }
+  }
+
+  return Array.from(memoriesByKey.values()).sort((a, b) => a.distance - b.distance);
+}
+
+function normalizeSearchText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 function isVaultActive(vault: VaultRow) {
   const active = vault.active.toLowerCase();
   return active === "true" || active === "active";
@@ -3197,6 +3844,9 @@ function parseRecalledMemory(text: string): ParsedRecalledMemory {
     action: fields.get("action"),
     amount: fields.get("amount"),
     category: fields.get("category"),
+    created: fields.get("created"),
+    attachmentName: fields.get("attachment"),
+    attachmentWalrusBlobId: fields.get("attachment walrus blob"),
   };
 }
 
@@ -3268,6 +3918,22 @@ function openAttachment(record: MemoryRecord) {
   }
 
   window.open(record.attachmentDataUrl, "_blank", "noopener,noreferrer");
+}
+
+async function downloadWalrusAttachment(blobId: string, filename: string) {
+  try {
+    const response = await fetch(`/api/walrus/read?blobId=${encodeURIComponent(blobId)}`);
+    const payload = (await response.json()) as WalrusReadApiResponse | { error?: string };
+
+    if (!response.ok) {
+      throw new Error("error" in payload && payload.error ? payload.error : "Unable to read Walrus attachment.");
+    }
+
+    const result = (payload as WalrusReadApiResponse).result;
+    downloadDataUrl(`data:application/octet-stream;base64,${result.base64}`, filename);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : "Unable to download attachment.");
+  }
 }
 
 function downloadDataUrl(dataUrl: string, filename: string) {

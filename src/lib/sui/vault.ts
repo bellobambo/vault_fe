@@ -64,6 +64,11 @@ export type OverspendInput = {
   note?: string | Uint8Array | number[];
 };
 
+export type BatchVaultActionInput =
+  | ({ action: "spend" } & SpendInput)
+  | ({ action: "swap" } & SwapCategoriesInput)
+  | ({ action: "overspend" } & OverspendInput);
+
 export type RedistributeBudgetInput = Omit<CreateBudgetInput, "amountMist"> & {
   vaultId: string;
 };
@@ -165,6 +170,54 @@ export function buildOverspendTransaction(input: OverspendInput) {
       note: bytesFromText(input.note),
     },
   })(tx);
+
+  return tx;
+}
+
+export function buildBatchVaultActionsTransaction(actions: BatchVaultActionInput[]) {
+  const tx = new Transaction();
+
+  for (const action of actions) {
+    if (action.action === "swap") {
+      swapCategories({
+        package: VAULT_PACKAGE_ID,
+        arguments: {
+          config: TREASURY_CONFIG_ID,
+          vault: action.vaultId,
+          fromCategoryId: action.fromCategoryId,
+          toCategoryId: action.toCategoryId,
+          amount: action.amountMist,
+        },
+      })(tx);
+      continue;
+    }
+
+    if (action.action === "overspend") {
+      overspend({
+        package: VAULT_PACKAGE_ID,
+        arguments: {
+          config: TREASURY_CONFIG_ID,
+          vault: action.vaultId,
+          categoryId: action.categoryId,
+          recipient: action.recipient,
+          amount: action.amountMist,
+          note: bytesFromText(action.note),
+        },
+      })(tx);
+      continue;
+    }
+
+    spend({
+      package: VAULT_PACKAGE_ID,
+      arguments: {
+        vault: action.vaultId,
+        categoryId: action.categoryId,
+        recipient: action.recipient,
+        amount: action.amountMist,
+        note: bytesFromText(action.note),
+      },
+    })(tx);
+  }
 
   return tx;
 }
