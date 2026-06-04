@@ -553,6 +553,27 @@ body {
   gap: 18px;
 }
 
+.vault-details-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.vault-details-actions .ant-btn:disabled,
+.vault-details-actions .ant-btn[disabled],
+.vault-details-actions .ant-btn-primary:disabled,
+.vault-details-actions .ant-btn-primary[disabled],
+.vault-details-actions .vault-details-action-disabled,
+.vault-details-actions .vault-details-action-disabled:hover,
+.vault-details-actions .vault-details-action-disabled:focus {
+  background: #e5e7eb !important;
+  border-color: #cbd5e1 !important;
+  color: #94a3b8 !important;
+  cursor: not-allowed;
+  opacity: 1;
+  box-shadow: none !important;
+}
+
 .vault-details-table {
   margin-top: 10px;
 }

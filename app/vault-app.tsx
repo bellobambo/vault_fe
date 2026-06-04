@@ -34,6 +34,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { SelectProps } from "antd";
@@ -44,14 +45,17 @@ import toast from "react-hot-toast";
 import {
   BUDGET_CYCLES,
   DEFAULT_CATEGORIES,
+  END_ACTIONS,
   SUI_NETWORK,
   VAULT_FEES_BPS,
   VAULT_EVENT_TYPES,
   VAULT_PACKAGE_ID,
 } from "@/src/config/vault";
 import {
+  buildCloseBudgetTransaction,
   buildCreateBudgetTransaction,
   buildOverspendTransaction,
+  buildRedistributeBudgetTransaction,
   buildSpendTransaction,
   buildSwapCategoriesTransaction,
   suiToMist,
@@ -216,6 +220,7 @@ export function VaultApp() {
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [openMemoryRecord, setOpenMemoryRecord] = useState<MemoryRecord | null>(null);
   const [openVaultDetails, setOpenVaultDetails] = useState<VaultRow | null>(null);
+  const [rollOverVault, setRollOverVault] = useState<VaultRow | null>(null);
   const [verifiedWalrusBlobId, setVerifiedWalrusBlobId] = useState<string | null>(null);
   const [verifiedWalrusSize, setVerifiedWalrusSize] = useState<number | null>(null);
   const [suiUsdPrice, setSuiUsdPrice] = useState<number | null>(null);
@@ -763,12 +768,20 @@ export function VaultApp() {
       (total, category) => total + category.allocationMist,
       BigInt(0),
     );
+    const rollOverBalanceMist = rollOverVault ? suiToMist(String(parseSuiNumberInput(rollOverVault.balance) ?? 0)) : null;
+
+    if (rollOverBalanceMist !== null && amountMist !== rollOverBalanceMist) {
+      toast.error(`Rollover allocations must equal the remaining ${rollOverVault?.balance}.`);
+      return;
+    }
+
     const now = Date.now();
     const memory = createMemoryDraft({
       kind: "budget",
-      title: values.memoryTitle || "Budget plan",
+      title: values.memoryTitle || (rollOverVault ? "Rolled over budget" : "Budget plan"),
       body: [
         values.memoryBody,
+        rollOverVault ? `Rolled over from: ${rollOverVault.id}` : undefined,
         `Cycle: ${values.cycle}`,
         `Total: ${formatMist(amountMist)}`,
         `Allocations: ${categories
@@ -779,15 +792,25 @@ export function VaultApp() {
         .join("\n"),
     });
 
-    const tx = buildCreateBudgetTransaction({
-      amountMist,
-      cycle: BUDGET_CYCLES[values.cycle],
-      startMs: now,
-      endMs: now + cycleDurationsMs[values.cycle],
-      categories,
-      allowOverspend: values.allowOverspend ?? true,
-      memoryRef: memory.memoryRef,
-    });
+    const tx = rollOverVault
+      ? buildRedistributeBudgetTransaction({
+        vaultId: rollOverVault.id,
+        cycle: BUDGET_CYCLES[values.cycle],
+        startMs: now,
+        endMs: now + cycleDurationsMs[values.cycle],
+        categories,
+        allowOverspend: values.allowOverspend ?? true,
+        memoryRef: memory.memoryRef,
+      })
+      : buildCreateBudgetTransaction({
+        amountMist,
+        cycle: BUDGET_CYCLES[values.cycle],
+        startMs: now,
+        endMs: now + cycleDurationsMs[values.cycle],
+        categories,
+        allowOverspend: values.allowOverspend ?? true,
+        memoryRef: memory.memoryRef,
+      });
 
     signAndExecute(
       { transaction: tx, chain: "sui:testnet" },
@@ -795,9 +818,10 @@ export function VaultApp() {
         onSuccess: (result) => {
           setLastDigest(result.digest);
           setOpenDrawer(null);
+          setRollOverVault(null);
           createForm.resetFields();
           hasManuallyEditedOtherAllocationRef.current = false;
-          toast.success("Budget transaction sent.");
+          toast.success(rollOverVault ? "Rollover budget transaction sent." : "Budget transaction sent.");
           void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
             toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
           });
@@ -931,6 +955,79 @@ export function VaultApp() {
         },
       },
     );
+  }
+
+  function handleCloseBudget(vault: VaultRow, action: "rollOver" | "withdraw") {
+    if (!account) {
+      toast.error("Connect your Sui wallet first.");
+      return;
+    }
+
+    if (vault.active === "true") {
+      toast.error("This budget is still active.");
+      return;
+    }
+
+    const memory = createMemoryDraft({
+      kind: "history",
+      title: `${labelize(action)} budget`,
+      body: [
+        `Action: ${labelize(action)}`,
+        `Vault: ${vault.id}`,
+        `Balance: ${vault.balance}`,
+      ].join("\n"),
+    });
+    const tx = buildCloseBudgetTransaction(vault.id, END_ACTIONS[action]);
+
+    signAndExecute(
+      { transaction: tx, chain: "sui:testnet" },
+      {
+        onSuccess: (result) => {
+          setLastDigest(result.digest);
+          setOpenVaultDetails(null);
+          toast.success(`${labelize(action)} transaction sent.`);
+          void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
+            toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
+          });
+          ownedVaults.refetch();
+          historyEvents.refetch();
+        },
+        onError: (error) => {
+          saveFailedTransactionMemory(memory);
+          toast.error(error.message);
+        },
+      },
+    );
+  }
+
+  function startRollOverBudget(vault: VaultRow) {
+    if (vault.active === "true") {
+      toast.error("This budget is still active.");
+      return;
+    }
+
+    const balances = vaultCategoryBalances.get(vault.id) ?? [];
+    const allocations = DEFAULT_CATEGORIES.map((category) => {
+      const balance = balances.find((item) => item.id === category.id);
+      const amount = parseSuiNumberInput(balance?.remaining) ?? 0;
+
+      return {
+        categoryId: category.id,
+        amount: amount.toFixed(2),
+      };
+    });
+
+    hasManuallyEditedOtherAllocationRef.current = true;
+    setRollOverVault(vault);
+    setOpenVaultDetails(null);
+    createForm.setFieldsValue({
+      cycle: "monthly",
+      allowOverspend: true,
+      memoryTitle: "Rolled over budget",
+      memoryBody: `Redistribute remaining ${vault.balance} from ${shortId(vault.id)}.`,
+      allocations,
+    });
+    setOpenDrawer("createBudget");
   }
 
   async function handleDocumentSave(values: { title: string; body?: string }) {
@@ -1145,6 +1242,7 @@ export function VaultApp() {
       setIsAICommanderOpen(false);
       setAssistantText("");
       hasManuallyEditedOtherAllocationRef.current = false;
+      setRollOverVault(null);
       createForm.setFieldsValue(draft.values);
       setOpenDrawer("createBudget");
       return;
@@ -1235,6 +1333,7 @@ export function VaultApp() {
               <Button
                 onClick={() => {
                   hasManuallyEditedOtherAllocationRef.current = false;
+                  setRollOverVault(null);
                   createForm.resetFields();
                   setOpenDrawer("createBudget");
                 }}
@@ -1458,14 +1557,45 @@ export function VaultApp() {
               rowKey={(category) => category.id}
               size="small"
             />
+
+            <div className="vault-details-actions">
+              <Tooltip title="Send the remaining budget balance back to your wallet after the cycle ends.">
+                <span>
+                  <Button
+                    className={isVaultActive(activeVaultDetails) || isPending ? "vault-details-action-disabled" : undefined}
+                    disabled={isVaultActive(activeVaultDetails) || isPending}
+                    loading={isPending}
+                    onClick={() => handleCloseBudget(activeVaultDetails, "withdraw")}
+                  >
+                    Withdraw
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title="Reallocate this expired vault's remaining balance into a new budget cycle.">
+                <span>
+                  <Button
+                    className={isVaultActive(activeVaultDetails) || isPending ? "vault-details-action-disabled" : undefined}
+                    disabled={isVaultActive(activeVaultDetails) || isPending}
+                    loading={isPending}
+                    onClick={() => startRollOverBudget(activeVaultDetails)}
+                    type="primary"
+                  >
+                    Redistribute
+                  </Button>
+                </span>
+              </Tooltip>
+            </div>
           </div>
         ) : null}
       </Modal>
 
       <Drawer
         open={openDrawer === "createBudget"}
-        title="Create Budget Vault"
-        onClose={() => setOpenDrawer(null)}
+        title={rollOverVault ? "Redistribute Budget" : "Create Budget Vault"}
+        onClose={() => {
+          setOpenDrawer(null);
+          setRollOverVault(null);
+        }}
         size="large"
       >
         <SuiUsdRateText price={suiUsdPrice} updatedAt={suiUsdUpdatedAt} />
@@ -1579,7 +1709,7 @@ export function VaultApp() {
           </Row>
 
           <Button block htmlType="submit" loading={isPending || isRemembering} type="primary">
-            Create budget
+            {rollOverVault ? "Save redistributed budget" : "Create budget"}
           </Button>
         </Form>
       </Drawer>
@@ -3038,6 +3168,11 @@ function mergeMemoryRecords(primaryRecords: MemoryRecord[], fallbackRecords: Mem
   return Array.from(recordsByKey.values()).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
+}
+
+function isVaultActive(vault: VaultRow) {
+  const active = vault.active.toLowerCase();
+  return active === "true" || active === "active";
 }
 
 function parseRecalledMemory(text: string): ParsedRecalledMemory {

@@ -29,8 +29,9 @@ Most budgeting tools only track spending after the money is already gone. Vault 
 4. The user can spend from a category.
 5. The user can swap unused allocation between categories.
 6. If enabled, the user can overspend with a contract-controlled fee.
-7. The app saves transaction notes and receipts to MemWal/Walrus.
-8. The user can search past receipts, notes, and spending history later.
+7. When a budget cycle ends, the user can withdraw remaining SUI or redistribute it into a new budget cycle.
+8. The app saves transaction notes and receipts to MemWal/Walrus.
+9. The user can search past receipts, notes, and spending history later.
 
 ## Why Sui
 
@@ -55,6 +56,13 @@ Main contract functions used by the frontend:
 - `spend`
 - `swap_categories`
 - `overspend`
+- `close_budget`
+- `redistribute_budget`
+
+End-cycle actions supported in the UI:
+
+- `Withdraw`: closes an expired budget and sends the remaining balance back to the user's wallet.
+- `Redistribute`: opens a new budget plan for the expired vault's remaining balance, then calls `redistribute_budget` when the user submits the new allocations.
 
 ## Walrus and MemWal
 
@@ -107,6 +115,8 @@ Vault fits the DeFi & Payments track because it turns simple payments into progr
 - SUI is locked into an onchain vault.
 - Spending is controlled by category rules.
 - Swapping reallocates budget mid-cycle.
+- Withdraw returns unspent funds after a budget cycle ends.
+- Redistribute reuses the remaining balance for a new budget cycle.
 - Overspending is enforced by contract logic and fees.
 - The app gives users a simple financial interface for managing funds.
 
@@ -135,9 +145,12 @@ Create a `.env` file with:
 MEMWAL_ACCOUNT_ID=
 MEMWAL_PRIVATE_KEY=
 MEMWAL_SERVER_URL=
+WALRUS_STORAGE_DRIVER=http
+WALRUS_PUBLISHER_URL=https://publisher.walrus-testnet.walrus.space
+WALRUS_AGGREGATOR_URL=https://aggregator.walrus-testnet.walrus.space
 ```
 
-Walrus CLI must also be configured locally for Testnet if you want direct file uploads through the app.
+Walrus file uploads use the HTTP publisher/aggregator by default. Set `WALRUS_STORAGE_DRIVER=cli` only for local environments where the Walrus CLI is installed and available in `PATH`.
 
 ## Run Locally
 
