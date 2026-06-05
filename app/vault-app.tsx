@@ -108,6 +108,17 @@ type VaultCategoryBalance = {
   remainingMist: string;
 };
 
+type RebalanceSuggestion = {
+  fromCategoryId: number;
+  fromCategoryName: string;
+  fromRemaining: string;
+  toCategoryId: number;
+  toCategoryName: string;
+  toRemaining: string;
+  amountMist: bigint;
+  amount: string;
+};
+
 type VaultRow = {
   id: string;
   balance: string;
@@ -518,6 +529,12 @@ export function VaultApp() {
   const activeVaultDetails = useMemo(
     () => openVaultDetails ? vaultRows.find((vault) => vault.id === openVaultDetails.id) ?? openVaultDetails : null,
     [openVaultDetails, vaultRows],
+  );
+  const activeRebalanceSuggestion = useMemo(
+    () => activeVaultDetails
+      ? buildTreasuryRebalanceSuggestion(vaultCategoryBalances.get(activeVaultDetails.id) ?? [])
+      : null,
+    [activeVaultDetails, vaultCategoryBalances],
   );
 
   const spendHistoryColumns: ColumnsType<HistoryEvent> = [
@@ -1262,6 +1279,55 @@ export function VaultApp() {
     );
   }
 
+  function handleTreasuryRebalance(vault: VaultRow, suggestion: RebalanceSuggestion) {
+    if (!account) {
+      toast.error("Connect your Sui wallet first.");
+      return;
+    }
+
+    if (!isVaultActive(vault)) {
+      toast.error("Only active vaults can be rebalanced.");
+      return;
+    }
+
+    const memory = createMemoryDraft({
+      kind: "history",
+      title: "Treasury Rebalance",
+      body: [
+        "Action: treasury rebalance",
+        `Vault: ${vault.id}`,
+        `Move: ${suggestion.amount} from ${suggestion.fromCategoryName} to ${suggestion.toCategoryName}`,
+        `Reason: idle capital detected in ${suggestion.fromCategoryName}; ${suggestion.toCategoryName} has the lowest remaining allocation.`,
+      ].join("\n"),
+    });
+
+    const tx = buildSwapCategoriesTransaction({
+      vaultId: vault.id,
+      fromCategoryId: suggestion.fromCategoryId,
+      toCategoryId: suggestion.toCategoryId,
+      amountMist: suggestion.amountMist,
+    });
+
+    signAndExecute(
+      { transaction: tx, chain: "sui:testnet" },
+      {
+        onSuccess: (result) => {
+          setLastDigest(result.digest);
+          toast.success("Treasury rebalance applied successfully.");
+          void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
+            toast.error(error instanceof Error ? error.message : "Unable to save rebalance memory.");
+          });
+          ownedVaults.refetch();
+          historyEvents.refetch();
+        },
+        onError: (error) => {
+          saveFailedTransactionMemory(memory);
+          toast.error(error.message);
+        },
+      },
+    );
+  }
+
   function handleCloseBudget(vault: VaultRow, action: "rollOver" | "withdraw") {
     if (!account) {
       toast.error("Connect your Sui wallet first.");
@@ -1872,6 +1938,58 @@ export function VaultApp() {
               rowKey={(category) => category.id}
               size="small"
             />
+
+            <div className="rounded-md border border-[#007979]/20 bg-[#007979]/5 p-4">
+              <div className="mb-3 flex flex-col gap-1">
+                <Typography.Text className="font-semibold">Treasury Rebalance</Typography.Text>
+                <Typography.Text type="secondary">
+                  Detect idle category capital and move it toward the category with the weakest remaining allocation.
+                </Typography.Text>
+              </div>
+
+              {activeRebalanceSuggestion ? (
+                <div className="grid gap-3">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div>
+                      <Typography.Text type="secondary">From</Typography.Text>
+                      <Typography.Paragraph className="!mb-0 font-semibold">
+                        {activeRebalanceSuggestion.fromCategoryName}
+                      </Typography.Paragraph>
+                      <Typography.Text className="text-xs">
+                        {activeRebalanceSuggestion.fromRemaining} remaining
+                      </Typography.Text>
+                    </div>
+                    <div>
+                      <Typography.Text type="secondary">To</Typography.Text>
+                      <Typography.Paragraph className="!mb-0 font-semibold">
+                        {activeRebalanceSuggestion.toCategoryName}
+                      </Typography.Paragraph>
+                      <Typography.Text className="text-xs">
+                        {activeRebalanceSuggestion.toRemaining} remaining
+                      </Typography.Text>
+                    </div>
+                    <div>
+                      <Typography.Text type="secondary">Suggested move</Typography.Text>
+                      <Typography.Paragraph className="!mb-0 font-semibold">
+                        {activeRebalanceSuggestion.amount}
+                      </Typography.Paragraph>
+                    </div>
+                  </div>
+                  <Button
+                    disabled={isPending || !isVaultActive(activeVaultDetails)}
+                    loading={isPending}
+                    onClick={() => handleTreasuryRebalance(activeVaultDetails, activeRebalanceSuggestion)}
+                    type="primary"
+                  >
+                    Apply Rebalance
+                  </Button>
+                </div>
+              ) : (
+                <Typography.Text>
+                  No rebalance suggestion right now. Category capital is either balanced or too low to move safely.
+                </Typography.Text>
+              )}
+            </div>
 
             <div className="vault-details-actions">
               <Tooltip title="Send the remaining budget balance back to your wallet after the cycle ends.">
@@ -3987,6 +4105,61 @@ function formatSuiWithUsd(value: string, price: number | null) {
 
   const amount = parseSuiNumberInput(value);
   return amount === null ? value : `${value} (${formatUsd(amount * price)})`;
+}
+
+function buildTreasuryRebalanceSuggestion(categories: VaultCategoryBalance[]): RebalanceSuggestion | null {
+  const movableCategories = categories
+    .map((category) => ({
+      ...category,
+      remainingValue: BigInt(category.remainingMist),
+      allocationValue: BigInt(category.allocationMist),
+    }))
+    .filter((category) => category.remainingValue > BigInt(0));
+
+  if (movableCategories.length < 2) {
+    return null;
+  }
+
+  const source = [...movableCategories].sort((a, b) => compareBigIntDesc(a.remainingValue, b.remainingValue))[0];
+  const target = [...movableCategories]
+    .filter((category) => category.id !== source.id)
+    .sort((a, b) => compareBigIntAsc(a.remainingValue, b.remainingValue))[0];
+
+  if (!source || !target) {
+    return null;
+  }
+
+  const difference = source.remainingValue - target.remainingValue;
+  const minimumMove = BigInt(1_000_000);
+
+  if (difference <= minimumMove) {
+    return null;
+  }
+
+  const amountMist = difference / BigInt(2);
+
+  if (amountMist < minimumMove) {
+    return null;
+  }
+
+  return {
+    fromCategoryId: source.id,
+    fromCategoryName: source.name,
+    fromRemaining: source.remaining,
+    toCategoryId: target.id,
+    toCategoryName: target.name,
+    toRemaining: target.remaining,
+    amountMist,
+    amount: formatMist(amountMist),
+  };
+}
+
+function compareBigIntAsc(a: bigint, b: bigint) {
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+
+function compareBigIntDesc(a: bigint, b: bigint) {
+  return a === b ? 0 : a > b ? -1 : 1;
 }
 
 function formatRateUpdatedAt(value: string) {

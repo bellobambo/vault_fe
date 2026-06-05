@@ -1,8 +1,8 @@
 # Vault
 
-Vault is a Sui-based budgeting app that helps students budget money properly in SUI.
+Vault is a Sui-based DeFi, budgeting, and payments app for student treasury management and category-based capital allocation.
 
-The app lets a user lock SUI into a smart contract vault, split that SUI into spending categories, and then spend from those categories with onchain rules. It also stores receipts, notes, transaction memory, and uploaded documents using Walrus and MemWal so the user can search and recover their financial memory later.
+The app lets a user lock SUI into a smart contract vault, split that SUI into spending categories, rebalance idle capital, and batch multiple actions with Sui Programmable Transaction Blocks (PTBs). It also stores receipts, notes, transaction memory, and uploaded documents using Walrus and MemWal so the user can search and recover their financial memory later.
 
 ## Problem
 
@@ -29,10 +29,11 @@ Most budgeting tools only track spending after the money is already gone. Vault 
 4. The user can spend from a category.
 5. The user can swap unused allocation between categories.
 6. The user can batch multiple spends, swaps, and overspends into one Sui Programmable Transaction Block.
-7. If enabled, the user can overspend with a contract-controlled fee.
-8. When a budget cycle ends, the user can withdraw remaining SUI or redistribute it into a new budget cycle.
-9. The app saves transaction notes and receipts to MemWal/Walrus.
-10. The user can search past receipts, notes, and spending history later.
+7. The app can suggest treasury rebalances by moving idle capital from overfunded categories to underfunded ones.
+8. If enabled, the user can overspend with a contract-controlled fee.
+9. When a budget cycle ends, the user can withdraw remaining SUI or redistribute it into a new budget cycle.
+10. The app saves transaction notes and receipts to MemWal/Walrus.
+11. The user can search past receipts, notes, and spending history later.
 
 ## Why Sui
 
@@ -116,6 +117,19 @@ Vault supports Batch Transactions for students who need to perform multiple fina
 - Batch transaction records are saved to MemWal/Walrus like other transaction memories.
 - The app checks category remaining balances before signing and warns when a spend should be converted to overspend.
 
+## Treasury Rebalance
+
+Vault includes a treasury management action inside each vault's details view.
+
+- The app reads each category's remaining allocation.
+- It detects the category with the most idle capital.
+- It detects the category with the weakest remaining balance.
+- It suggests moving half of the gap between those two remaining balances.
+- The user can apply the suggestion with one onchain `swap_categories` transaction.
+- The rebalance is saved as a financial memory so the user can recall the treasury decision later.
+
+This makes the vault act like a simple capital allocator instead of only a spending tracker.
+
 ## SUI/USD Conversion
 
 The app fetches a live SUI/USD estimate and shows:
@@ -130,12 +144,13 @@ This helps users understand the real-world value of their SUI budget.
 
 ### DeFi & Payments
 
-Vault fits the DeFi & Payments track because it turns simple payments into programmable financial actions.
+Vault fits the DeFi & Payments track because it turns simple payments into programmable financial actions. Its strongest fit is **Vaults & Capital Management**: the app behaves like a lightweight student treasury management system and capital allocator.
 
 - SUI is locked into an onchain vault.
 - Spending is controlled by category rules.
 - Swapping reallocates budget mid-cycle.
-- Batch Transactions use Sui PTBs to execute multiple spends and swaps with one wallet confirmation.
+- Batch Transactions use Sui Programmable Transaction Blocks (PTBs) to execute multiple spends and swaps with one wallet confirmation.
+- Treasury Rebalance suggests moving idle category capital toward underfunded categories.
 - Withdraw returns unspent funds after a budget cycle ends.
 - Redistribute reuses the remaining balance for a new budget cycle.
 - Overspending is enforced by contract logic and fees.
