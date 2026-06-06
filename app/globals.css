@@ -182,6 +182,26 @@ body {
   color: var(--vault-accent) !important;
 }
 
+.vault-card-scroll {
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.vault-card-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.vault-card-scroll::-webkit-scrollbar-track {
+  background: rgba(245, 245, 245, 0.16);
+  border-radius: 999px;
+}
+
+.vault-card-scroll::-webkit-scrollbar-thumb {
+  background: rgba(245, 245, 245, 0.58);
+  border-radius: 999px;
+}
+
 .vault-main {
   background-color: transparent !important;
   background-image: linear-gradient(rgba(0, 121, 121, 0.96), rgba(0, 121, 121, 0.96)),
@@ -257,6 +277,11 @@ body {
   background: transparent !important;
   color: var(--vault-primary) !important;
   border-color: #9ca3af !important;
+}
+
+.batch-operation-list {
+  display: grid;
+  gap: 20px;
 }
 
 .history-detail-grid {
