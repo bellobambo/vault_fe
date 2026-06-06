@@ -1641,9 +1641,9 @@ export function VaultApp() {
       return;
     }
 
-    const draft = (await createOpenAiActionDraft(text, vaultRows, []))
-      ?? createBatchActionDraft(text, vaultRows)
-      ?? createActionDraft(text, vaultRows);
+    const draft = (await createOpenAiActionDraft(text, sortedVaultRows, []))
+      ?? createBatchActionDraft(text, sortedVaultRows)
+      ?? createActionDraft(text, sortedVaultRows);
 
     if (draft.kind === "budget") {
       setIsAICommanderOpen(false);
@@ -3479,10 +3479,10 @@ function findVaultForText(text: string, vaultRows: Array<{ id: string; categorie
     if (vaultRows[index]) return vaultRows[index];
   }
 
-  // 2. Identification by Keywords ("first", "last", "latest", "recent")
+  // 2. Identification by Keywords. vaultRows is ordered the same as the cards: newest first.
   if (lower.includes("first")) return vaultRows[0];
   if (lower.includes("last") || lower.includes("latest") || lower.includes("recent")) {
-    return vaultRows[vaultRows.length - 1];
+    return vaultRows[0];
   }
 
   // 3. Identification by ID Fragment (0x...)
@@ -3490,7 +3490,7 @@ function findVaultForText(text: string, vaultRows: Array<{ id: string; categorie
   if (idMatch) return idMatch;
 
   // 4. Default: Return newest vault
-  return vaultRows[vaultRows.length - 1] || vaultRows[0];
+  return vaultRows[0];
 }
 
 function extractSuiAmount(text: string) {
