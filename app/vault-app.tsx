@@ -127,6 +127,8 @@ type VaultRow = {
   categories: VaultCategoryOption[];
   duration: string;
   createdAt: string;
+  startMs: number | null;
+  endMs: number | null;
 };
 
 type HistoryEvent = {
@@ -277,6 +279,7 @@ export function VaultApp() {
   const [actionMode, setActionMode] = useState<"single" | "batch">("single");
   const [networkMemoryRecords, setNetworkMemoryRecords] = useState<MemoryRecord[]>([]);
   const [networkMemoryRecordsOwner, setNetworkMemoryRecordsOwner] = useState<string>();
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const hasManuallyEditedOtherAllocationRef = useRef(false);
   const [overspendModal, setOverspendModal] = useState<{
     visible: boolean;
@@ -290,6 +293,14 @@ export function VaultApp() {
   useEffect(() => {
     const registration = registerSlushWallet("Slush");
     return () => registration?.unregister();
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 30_000);
+
+    return () => window.clearInterval(intervalId);
   }, []);
 
   useEffect(() => {
@@ -434,6 +445,8 @@ export function VaultApp() {
           categories: parseVaultCategories(fields.categories),
           duration: formatBudgetDuration(fields.start_ms, fields.end_ms),
           createdAt: formatDateTimeFromMs(fields.start_ms),
+          startMs: parseTimestampMs(fields.start_ms),
+          endMs: parseTimestampMs(fields.end_ms),
         };
       }) ?? []
     );
@@ -1285,7 +1298,7 @@ export function VaultApp() {
       return;
     }
 
-    if (!isVaultActive(vault)) {
+    if (!isVaultActive(vault, nowMs)) {
       toast.error("Only active vaults can be rebalanced.");
       return;
     }
@@ -1334,7 +1347,7 @@ export function VaultApp() {
       return;
     }
 
-    if (vault.active === "true") {
+    if (isVaultActive(vault, nowMs)) {
       toast.error("This budget is still active.");
       return;
     }
@@ -1372,7 +1385,7 @@ export function VaultApp() {
   }
 
   function startRollOverBudget(vault: VaultRow) {
-    if (vault.active === "true") {
+    if (isVaultActive(vault, nowMs)) {
       toast.error("This budget is still active.");
       return;
     }
@@ -1976,7 +1989,7 @@ export function VaultApp() {
                     </div>
                   </div>
                   <Button
-                    disabled={isPending || !isVaultActive(activeVaultDetails)}
+                    disabled={isPending || !isVaultActive(activeVaultDetails, nowMs)}
                     loading={isPending}
                     onClick={() => handleTreasuryRebalance(activeVaultDetails, activeRebalanceSuggestion)}
                     type="primary"
@@ -1995,8 +2008,8 @@ export function VaultApp() {
               <Tooltip title="Send the remaining budget balance back to your wallet after the cycle ends.">
                 <span>
                   <Button
-                    className={isVaultActive(activeVaultDetails) || isPending ? "vault-details-action-disabled" : undefined}
-                    disabled={isVaultActive(activeVaultDetails) || isPending}
+                    className={isVaultActive(activeVaultDetails, nowMs) || isPending ? "vault-details-action-disabled" : undefined}
+                    disabled={isVaultActive(activeVaultDetails, nowMs) || isPending}
                     loading={isPending}
                     onClick={() => handleCloseBudget(activeVaultDetails, "withdraw")}
                   >
@@ -2007,8 +2020,8 @@ export function VaultApp() {
               <Tooltip title="Reallocate this expired vault's remaining balance into a new budget cycle.">
                 <span>
                   <Button
-                    className={isVaultActive(activeVaultDetails) || isPending ? "vault-details-action-disabled" : undefined}
-                    disabled={isVaultActive(activeVaultDetails) || isPending}
+                    className={isVaultActive(activeVaultDetails, nowMs) || isPending ? "vault-details-action-disabled" : undefined}
+                    disabled={isVaultActive(activeVaultDetails, nowMs) || isPending}
                     loading={isPending}
                     onClick={() => startRollOverBudget(activeVaultDetails)}
                     type="primary"
@@ -3184,15 +3197,11 @@ function createActionDraft(text: string, vaultRows: Array<{ id: string; categori
 }
 
 function createBatchActionDraft(text: string, vaultRows: Array<{ id: string; categories: VaultCategoryOption[] }>): AssistantDraft | null {
-  const lower = text.toLowerCase();
-  const actionCount = (lower.match(/\b(spend|send|pay|swap|move|overspend)\b/g) ?? []).length;
-
-  if (actionCount < 2) {
-    return null;
-  }
-
   const vault = findVaultForText(text, vaultRows);
   const segments = splitActionSegments(text);
+  const sharedRecipient = extractAddresses(text).find(
+    (address) => address.toLowerCase() !== vault?.id.toLowerCase(),
+  );
 
   if (segments.length < 2) {
     return null;
@@ -3212,16 +3221,15 @@ function createBatchActionDraft(text: string, vaultRows: Array<{ id: string; cat
       return [];
     }
 
-    if (
-      draft.values.action !== "swap" &&
-      (!draft.values.recipient || draft.values.categoryId === undefined)
-    ) {
+    const recipient = draft.values.recipient ?? sharedRecipient;
+
+    if (draft.values.action !== "swap" && (!recipient || draft.values.categoryId === undefined)) {
       return [];
     }
 
     return [{
       action: draft.values.action,
-      recipient: draft.values.recipient,
+      recipient,
       categoryId: draft.values.categoryId,
       fromCategoryId: draft.values.fromCategoryId,
       toCategoryId: draft.values.toCategoryId,
@@ -3282,10 +3290,16 @@ function isExecutableActionDraft(values: Partial<ActionValues> & Pick<ActionValu
 function splitActionSegments(text: string) {
   const marker = "\n---VAULT_ACTION---";
   return text
-    .replace(/\b(?:then|and|also)\s+(?=\b(?:spend|send|pay|swap|move|overspend)\b)/gi, marker)
+    .replace(
+      /\b(?:then|and|also)\s+(?=(?:\b(?:spend|send|pay|swap|move|overspend)\b|\d+(?:\.\d{1,9})?\b))/gi,
+      marker,
+    )
     .split(new RegExp(`${marker}|[;\n]+`, "g"))
     .map((segment) => segment.trim())
-    .filter((segment) => /\b(spend|send|pay|swap|move|overspend)\b/i.test(segment));
+    .filter((segment) => (
+      /\b(spend|send|pay|swap|move|overspend)\b/i.test(segment) ||
+      (Boolean(extractSuiAmount(segment)) && extractCategoryMentions(segment).length > 0)
+    ));
 }
 
 function extractCycle(text: string): keyof typeof BUDGET_CYCLES {
@@ -3935,9 +3949,15 @@ function normalizeSearchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function isVaultActive(vault: VaultRow) {
+function isVaultActive(vault: VaultRow, nowMs = Date.now()) {
   const active = vault.active.toLowerCase();
-  return active === "true" || active === "active";
+  const activeFlag = active === "true" || active === "active";
+
+  if (!activeFlag) {
+    return false;
+  }
+
+  return vault.endMs === null || nowMs < vault.endMs;
 }
 
 function parseRecalledMemory(text: string): ParsedRecalledMemory {
