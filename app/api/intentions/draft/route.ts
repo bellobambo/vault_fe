@@ -361,7 +361,7 @@ function normalizeDraft(draft: OpenAiIntentDraft, originalText: string, vaultRow
         action: draft.values.action ?? "spend",
         vaultId: draft.values.vaultId && vaultRows.some((vault) => vault.id === draft.values.vaultId)
           ? draft.values.vaultId
-          : vaultRows[vaultRows.length - 1]?.id,
+          : vaultRows[0]?.id,
         recipient: draft.values.recipient ?? undefined,
         categoryId: draft.values.categoryId ?? undefined,
         fromCategoryId: draft.values.fromCategoryId ?? undefined,

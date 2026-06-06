@@ -16,8 +16,9 @@
 }
 
 html {
-  overflow: hidden;
-  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-height: 100vh;
 }
 
 body {
@@ -33,8 +34,9 @@ body {
     220px 170px;
   color: var(--foreground);
   font-family: var(--font-sans), sans-serif;
-  overflow: hidden;
-  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-height: 100vh;
 }
 
 .ant-btn-primary {
@@ -183,23 +185,7 @@ body {
 }
 
 .vault-card-scroll {
-  max-height: calc(100vh - 260px);
-  overflow-y: auto;
-  padding-right: 6px;
-}
-
-.vault-card-scroll::-webkit-scrollbar {
-  width: 8px;
-}
-
-.vault-card-scroll::-webkit-scrollbar-track {
-  background: rgba(245, 245, 245, 0.16);
-  border-radius: 999px;
-}
-
-.vault-card-scroll::-webkit-scrollbar-thumb {
-  background: rgba(245, 245, 245, 0.58);
-  border-radius: 999px;
+  padding-right: 0;
 }
 
 .vault-main {
