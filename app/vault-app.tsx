@@ -350,6 +350,14 @@ export function VaultApp() {
     setMemoryRecordsVersion((version) => version + 1);
   }
 
+  function refreshPageAfterTransaction() {
+    ownedVaults.refetch();
+    historyEvents.refetch();
+    window.setTimeout(() => {
+      window.location.reload();
+    }, 1_500);
+  }
+
   // Handle form value changes to auto-calculate Other category in real-time
   function handleCreateFormValuesChange(
     changedFields: Partial<CreateBudgetValues>,
@@ -460,6 +468,10 @@ export function VaultApp() {
       }) ?? []
     );
   }, [ownedVaults.data]);
+  const sortedVaultRows = useMemo(
+    () => [...vaultRows].sort((a, b) => (b.startMs ?? 0) - (a.startMs ?? 0)),
+    [vaultRows],
+  );
 
   const historyRows = useMemo(() => {
     const walletAddress = account?.address.toLowerCase();
@@ -924,8 +936,7 @@ export function VaultApp() {
           void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
             toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
           });
-          ownedVaults.refetch();
-          historyEvents.refetch();
+          refreshPageAfterTransaction();
         },
         onError: (error) => {
           saveFailedTransactionMemory(memory);
@@ -1158,9 +1169,8 @@ export function VaultApp() {
             void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
               toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
             });
-            ownedVaults.refetch();
-            historyEvents.refetch();
             onComplete?.();
+            refreshPageAfterTransaction();
           },
           onError: (error) => {
             saveFailedTransactionMemory(memory);
@@ -1288,9 +1298,8 @@ export function VaultApp() {
           void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
             toast.error(error instanceof Error ? error.message : "Unable to save transaction memory.");
           });
-          ownedVaults.refetch();
-          historyEvents.refetch();
           onComplete?.();
+          refreshPageAfterTransaction();
         },
         onError: (error) => {
           saveFailedTransactionMemory(memory);
@@ -1802,9 +1811,10 @@ export function VaultApp() {
               <SuiUsdRateText price={suiUsdPrice} updatedAt={suiUsdUpdatedAt} />
             </div>
 
-            {vaultRows.length > 0 ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {vaultRows.map((vault, index) => (
+            {sortedVaultRows.length > 0 ? (
+              <div className="vault-card-scroll">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {sortedVaultRows.map((vault, index) => (
                   <Card
                     key={vault.id}
                     className="compact-card centered-form-card"
@@ -1812,7 +1822,7 @@ export function VaultApp() {
                       <div className="flex items-center justify-between">
                         <span>Budget Vault #{index + 1}</span>
                         <Tag className="theme-tag">
-                          {vault.active === "true" ? "Active" : vault.active}
+                          {formatVaultStatus(vault, nowMs)}
                         </Tag>
                       </div>
                     }
@@ -1897,7 +1907,8 @@ export function VaultApp() {
                       </div>
                     </div>
                   </Card>
-                ))}
+                  ))}
+                </div>
               </div>
             ) : (
               <div className="text-center">
@@ -2212,7 +2223,7 @@ export function VaultApp() {
               }}
             >
               <Radio.Button value="single">Single</Radio.Button>
-              <Radio.Button value="batch">Batch PTB</Radio.Button>
+              <Radio.Button value="batch">Batch Transaction</Radio.Button>
             </Radio.Group>
           </Form.Item>
 
@@ -2268,7 +2279,8 @@ export function VaultApp() {
           ) : (
             <Form.List name="batchActions">
               {(fields, { add, remove }) => (
-                <div className="space-y-4">
+                <div className="mb-3">
+                  <div className="batch-operation-list">
                   {fields.map((field, index) => {
                     const operationAction = actionForm.getFieldValue(["batchActions", field.name, "action"]) as BatchActionValues["action"] | undefined;
 
@@ -2277,6 +2289,7 @@ export function VaultApp() {
                         className="compact-card centered-form-card"
                         key={field.key}
                         size="small"
+                        style={{ marginBottom: index < fields.length - 1 ? 20 : 0 }}
                         title={`PTB operation ${index + 1}`}
                         extra={
                           fields.length > 1 ? (
@@ -2339,9 +2352,11 @@ export function VaultApp() {
                       </Card>
                     );
                   })}
+                  </div>
 
                   <Button
                     block
+                    className="mt-2"
                     icon={<PlusOutlined />}
                     onClick={() => add({ action: "spend" })}
                   >
@@ -2352,8 +2367,8 @@ export function VaultApp() {
             </Form.List>
           )}
 
-          <Button block htmlType="submit" loading={isPending || isRemembering} type="primary">
-            {actionMode === "batch" ? "Send batch PTB" : `Send ${activeAction}`}
+          <Button block className={actionMode === "batch" ? "!mt-0" : undefined} htmlType="submit" loading={isPending || isRemembering} type="primary">
+            {actionMode === "batch" ? "Send Batch PTB" : labelize(activeAction)}
           </Button>
         </Form>
       </Drawer>
@@ -3967,6 +3982,17 @@ function isVaultActive(vault: VaultRow, nowMs = Date.now()) {
   }
 
   return vault.endMs === null || nowMs < vault.endMs;
+}
+
+function formatVaultStatus(vault: VaultRow, nowMs = Date.now()) {
+  const active = vault.active.toLowerCase();
+  const activeFlag = active === "true" || active === "active";
+
+  if (activeFlag) {
+    return isVaultActive(vault, nowMs) ? "Active" : "Expired";
+  }
+
+  return vault.active === "false" ? "Closed" : vault.active;
 }
 
 function parseRecalledMemory(text: string): ParsedRecalledMemory {
