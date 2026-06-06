@@ -359,10 +359,19 @@ export function VaultApp() {
       return;
     }
 
-    const changedAllocation = changedFields.allocations?.find((allocation) => allocation);
+    const changedAllocations = changedFields.allocations ?? [];
+    const changedAllocation = changedAllocations.find((allocation) => allocation);
 
     if (changedAllocation?.categoryId === 4 || changedFields.allocations?.[4]?.amount !== undefined) {
       hasManuallyEditedOtherAllocationRef.current = true;
+      return;
+    }
+
+    const changedMainAllocationAmount = changedAllocations
+      .slice(0, 4)
+      .some((allocation) => allocation?.amount !== undefined);
+
+    if (!changedMainAllocationAmount) {
       return;
     }
 
