@@ -1,8 +1,8 @@
 # Vault
 
-Vault is a Sui-based DeFi, budgeting, and payments platform for student treasury management and category-based capital allocation.
+Vault is a Sui-based DeFi, budgeting, and payments platform for student treasury management and category-based funds allocation.
 
-Users deposit SUI into a budget vault, split it into categories, spend from those categories with onchain rules, rebalance idle funds, and save financial records with Walrus/MemWal.
+Users deposit SUI into a budget vault, split it into categories, spend and swap from those categories with onchain rules, rebalance idle funds, and save financial records with Walrus/MemWal.
 
 ## Problem Vault Solves
 
@@ -14,7 +14,7 @@ Students need a simple way to manage spending across daily needs like food, tran
 - Spend from categories such as Food, Transport, Academics, Entertainment/Utilities, and Other.
 - Swap unused allocation between categories.
 - Use Batch Transactions with Sui Programmable Transaction Blocks (PTBs) to submit multiple spends, swaps, or overspends with one wallet confirmation.
-- Use Treasury Rebalance to move idle capital from the category with the highest remaining balance toward the category with the weakest remaining balance.
+- Use Treasury Rebalance to move idle funds from the category with the highest remaining balance toward the category with the weakest remaining balance.
 - Save receipts, notes, transaction memories, and documents with Walrus/MemWal.
 - Search saved financial memory from the app.
 - View SUI/USD estimates beside balances and action amounts.
@@ -31,7 +31,7 @@ The app:
 - suggests moving half of the gap between both balances
 - applies the rebalance through the onchain `swap_categories` function
 
-This supports the **Vaults & Capital Management** track by making the vault act as a simple treasury management system and capital allocator.
+Supporting the **Vaults & Capital Management** track by making the vault act as a simple treasury management system and capital allocator.
 
 ## Batch Transactions with PTBs
 
@@ -90,7 +90,7 @@ Main contract functions used:
 
 ## Track Fit
 
-Vault fits the **DeFi & Payments** track, especially **Vaults & Capital Management** and **Financial Automation**.
+I am submitting Vault for the **DeFi & Payments** track, especially **Vaults & Capital Management** , **Financial Automation** , the **Walrus/Memwal** track and for the University award.
 
 - Vaults hold and manage user funds.
 - Category rules enforce how funds can be spent.
