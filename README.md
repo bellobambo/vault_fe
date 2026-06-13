@@ -1,6 +1,6 @@
 # Vault
 
-Vault is a Sui-based DeFi, budgeting, and payments app for student treasury management and category-based capital allocation.
+Vault is a Sui-based DeFi, budgeting, and payments platform for student treasury management and category-based capital allocation.
 
 Users deposit SUI into a budget vault, split it into categories, spend from those categories with onchain rules, rebalance idle funds, and save financial records with Walrus/MemWal.
 
