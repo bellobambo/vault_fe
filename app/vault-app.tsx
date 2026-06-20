@@ -260,6 +260,7 @@ export function VaultApp() {
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [openMemoryRecord, setOpenMemoryRecord] = useState<MemoryRecord | null>(null);
   const [openVaultDetails, setOpenVaultDetails] = useState<VaultRow | null>(null);
+  const [pendingBudgetAction, setPendingBudgetAction] = useState<"rebalance" | "withdraw" | null>(null);
   const [rollOverVault, setRollOverVault] = useState<VaultRow | null>(null);
   const [verifiedWalrusBlobId, setVerifiedWalrusBlobId] = useState<string | null>(null);
   const [verifiedWalrusSize, setVerifiedWalrusSize] = useState<number | null>(null);
@@ -1339,10 +1340,12 @@ export function VaultApp() {
       amountMist: suggestion.amountMist,
     });
 
+    setPendingBudgetAction("rebalance");
     signAndExecute(
       { transaction: tx, chain: "sui:testnet" },
       {
         onSuccess: (result) => {
+          setPendingBudgetAction(null);
           setLastDigest(result.digest);
           toast.success("Treasury rebalance applied successfully.");
           void persistMemoryRecord({ ...memory, txDigest: result.digest }).catch((error) => {
@@ -1352,6 +1355,7 @@ export function VaultApp() {
           historyEvents.refetch();
         },
         onError: (error) => {
+          setPendingBudgetAction(null);
           saveFailedTransactionMemory(memory);
           toast.error(error.message);
         },
@@ -1381,10 +1385,12 @@ export function VaultApp() {
     });
     const tx = buildCloseBudgetTransaction(vault.id, END_ACTIONS[action]);
 
+    setPendingBudgetAction(action === "withdraw" ? "withdraw" : null);
     signAndExecute(
       { transaction: tx, chain: "sui:testnet" },
       {
         onSuccess: (result) => {
+          setPendingBudgetAction(null);
           setLastDigest(result.digest);
           setOpenVaultDetails(null);
           toast.success(`${labelize(action)} transaction sent.`);
@@ -1395,6 +1401,7 @@ export function VaultApp() {
           historyEvents.refetch();
         },
         onError: (error) => {
+          setPendingBudgetAction(null);
           saveFailedTransactionMemory(memory);
           toast.error(error.message);
         },
@@ -2010,7 +2017,7 @@ export function VaultApp() {
                   </div>
                   <Button
                     disabled={isPending || !isVaultActive(activeVaultDetails, nowMs)}
-                    loading={isPending}
+                    loading={pendingBudgetAction === "rebalance"}
                     onClick={() => handleTreasuryRebalance(activeVaultDetails, activeRebalanceSuggestion)}
                     type="primary"
                   >
@@ -2030,7 +2037,7 @@ export function VaultApp() {
                   <Button
                     className={isVaultActive(activeVaultDetails, nowMs) || isPending ? "vault-details-action-disabled" : undefined}
                     disabled={isVaultActive(activeVaultDetails, nowMs) || isPending}
-                    loading={isPending}
+                    loading={pendingBudgetAction === "withdraw"}
                     onClick={() => handleCloseBudget(activeVaultDetails, "withdraw")}
                   >
                     Withdraw
@@ -2042,7 +2049,6 @@ export function VaultApp() {
                   <Button
                     className={isVaultActive(activeVaultDetails, nowMs) || isPending ? "vault-details-action-disabled" : undefined}
                     disabled={isVaultActive(activeVaultDetails, nowMs) || isPending}
-                    loading={isPending}
                     onClick={() => startRollOverBudget(activeVaultDetails)}
                     type="primary"
                   >
