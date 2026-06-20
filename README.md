@@ -114,9 +114,9 @@ Create a `.env` file with:
 MEMWAL_ACCOUNT_ID=
 MEMWAL_PRIVATE_KEY=
 MEMWAL_SERVER_URL=
-WALRUS_STORAGE_DRIVER=http
-WALRUS_PUBLISHER_URL=https://publisher.walrus-testnet.walrus.space
-WALRUS_AGGREGATOR_URL=https://aggregator.walrus-testnet.walrus.space
+WALRUS_STORAGE_DRIVER=
+WALRUS_PUBLISHER_URL=
+WALRUS_AGGREGATOR_URL=
 ```
 
 ## Run Locally
