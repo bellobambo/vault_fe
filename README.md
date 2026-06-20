@@ -114,9 +114,9 @@ Create a `.env` file with:
 MEMWAL_ACCOUNT_ID=
 MEMWAL_PRIVATE_KEY=
 MEMWAL_SERVER_URL=
-WALRUS_STORAGE_DRIVER=
 WALRUS_PUBLISHER_URL=
 WALRUS_AGGREGATOR_URL=
+OPENAI_API_KEY=
 ```
 
 ## Run Locally
@@ -137,6 +137,4 @@ http://localhost:3000
 ```bash
 npm run dev
 npm run build
-npm run lint
-npm run codegen
 ```
